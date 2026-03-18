@@ -3,10 +3,18 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <graphx.h>
 
-/* screen */
+/* flat pointer to the current draw buffer */
+#define GFX_VBUF  ((uint8_t*)&gfx_vbuffer)
+
+/* screen (use toolchain defines if available) */
+#ifndef LCD_WIDTH
 #define LCD_WIDTH        320
+#endif
+#ifndef LCD_HEIGHT
 #define LCD_HEIGHT       240
+#endif
 
 /* tiles */
 #define TILE_W           21

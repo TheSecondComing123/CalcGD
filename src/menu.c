@@ -53,7 +53,7 @@ void menu_run(void)
             draw_gd_text(rect_buf, 40 + tx, 27, 250, TXT_EMPTY + 1, TXT_EMPTY[0]);
 
             /* copy rect to screen */
-            uint8_t *screen = gfx_vbuffer;
+            uint8_t *screen = GFX_VBUF;
             for (int y = 0; y < 80; y++) {
                 memcpy(screen + (80 + y) * LCD_WIDTH + 35, rect_buf + y * 250, 250);
             }
@@ -144,17 +144,17 @@ static void draw_menu_bg(void)
     gfx_FillRectangle_NoClip(0, GAME_AREA_H + 1, LCD_WIDTH, LCD_HEIGHT - GAME_AREA_H - 1);
 
     /* draw side decorations */
-    draw_sprite_transparent(gfx_vbuffer, 2, 100,
+    draw_sprite_transparent(GFX_VBUF, 2, 100,
                             menu_data(MENU_SIDE_OFFSET), 30, 100);
     /* mirrored right side would need a mirror draw - skip for now */
 
     /* draw header */
-    draw_sprite_transparent(gfx_vbuffer, 60, 0,
+    draw_sprite_transparent(GFX_VBUF, 60, 0,
                             menu_data(MENU_HEADER_OFFSET), 200, 50);
 
     /* draw progress bar border */
     for (int i = 0; i < 22; i++) {
-        draw_filled_circle(gfx_vbuffer, 77 + i * 8, 170, 13, 0x09);
+        draw_filled_circle(GFX_VBUF, 77 + i * 8, 170, 13, 0x09);
     }
 
     /* copy to second buffer */
@@ -189,7 +189,7 @@ static void draw_level_info(void)
 
     /* copy rectangle to screen (both buffers) */
     for (int buf = 0; buf < 2; buf++) {
-        uint8_t *screen = gfx_vbuffer;
+        uint8_t *screen = GFX_VBUF;
         for (int y = 0; y < 80; y++) {
             memcpy(screen + (55 + y) * LCD_WIDTH + 35, rect_buf + y * 250, 250);
         }
@@ -213,11 +213,11 @@ static void draw_level_info(void)
         if (pct > 21) pct = 21;
 
         for (uint8_t i = 0; i < pct; i++) {
-            draw_filled_circle(gfx_vbuffer, 81 + i * 8, 170, 10, 0x2E);
+            draw_filled_circle(GFX_VBUF, 81 + i * 8, 170, 10, 0x2E);
         }
         gfx_SwapDraw();
         for (uint8_t i = 0; i < pct; i++) {
-            draw_filled_circle(gfx_vbuffer, 81 + i * 8, 170, 10, 0x2E);
+            draw_filled_circle(GFX_VBUF, 81 + i * 8, 170, 10, 0x2E);
         }
         gfx_SwapDraw();
     }
@@ -256,7 +256,7 @@ static void menu_create_level(void)
         draw_sprite_transparent(rect_buf, 5, 23, diff_icon, 30, 30);
 
         /* copy to screen */
-        uint8_t *screen = gfx_vbuffer;
+        uint8_t *screen = GFX_VBUF;
         for (int y = 0; y < 80; y++) {
             memcpy(screen + (55 + y) * LCD_WIDTH + 35, rect_buf + y * 250, 250);
         }
@@ -351,7 +351,7 @@ static uint8_t get_key_letter(void)
         if (kb_IsDown(kb_Key5))      { while (kb_AnyKey()) kb_Scan(); return 21; } /* U */
         if (kb_IsDown(kb_Key6))      { while (kb_AnyKey()) kb_Scan(); return 22; } /* V */
         if (kb_IsDown(kb_KeySub))    { while (kb_AnyKey()) kb_Scan(); return 23; } /* W */
-        if (kb_IsDown(kb_KeyStore))  { while (kb_AnyKey()) kb_Scan(); return 24; } /* X */
+        if (kb_IsDown(kb_KeySto))  { while (kb_AnyKey()) kb_Scan(); return 24; } /* X */
         if (kb_IsDown(kb_Key1))      { while (kb_AnyKey()) kb_Scan(); return 25; } /* Y */
         if (kb_IsDown(kb_Key2))      { while (kb_AnyKey()) kb_Scan(); return 26; } /* Z */
         if (kb_IsDown(kb_Key0))      { while (kb_AnyKey()) kb_Scan(); return ' '; }

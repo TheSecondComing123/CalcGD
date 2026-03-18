@@ -176,7 +176,7 @@ static void editor_draw_map(void)
             uint24_t map_idx = (uint24_t)row * edit_map_size_x + edit_scroll_col + col;
             uint8_t tile_id = edit_map_start[map_idx];
             if (tile_id > 0 && tile_id < NUM_GAME_TILES) {
-                draw_tile(gfx_vbuffer, col * TILE_W, row * TILE_H, tile_id);
+                draw_tile(GFX_VBUF, col * TILE_W, row * TILE_H, tile_id);
             }
         }
     }
@@ -202,5 +202,5 @@ static void editor_draw_block_selector(void)
     gfx_SetColor(0x00); /* black border */
     gfx_Rectangle_NoClip(preview_x - 1, preview_y - 1, TILE_W + 2, TILE_H + 2);
 
-    draw_tile(gfx_vbuffer, preview_x, preview_y, current_block);
+    draw_tile(GFX_VBUF, preview_x, preview_y, current_block);
 }

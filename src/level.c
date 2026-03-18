@@ -16,7 +16,7 @@ void level_scan(void)
     char *name;
     ms.num_levels = 0;
 
-    while ((name = ti_DetectVar(&search_pos, DATA_LEVEL_SIG, TI_APPVAR_TYPE)) != NULL) {
+    while ((name = ti_DetectVar(&search_pos, DATA_LEVEL_SIG, OS_TYPE_APPVAR)) != NULL) {
         if (ms.num_levels >= MAX_LEVELS) break;
 
         ti_var_t slot = ti_Open(name, "r");
@@ -247,7 +247,7 @@ bool level_create(const uint8_t *name_buf, uint8_t difficulty)
 
     /* calculate AppVar size */
     uint24_t map_data_size = 40 * WIN_ROWS; /* default 40 columns */
-    uint24_t av_size = DATA_LEVEL_SIG_LEN + total_name + 1 + 3 + 1 + 3 + 1 + map_data_size + 2;
+    (void)map_data_size; /* size is implicit from sequential writes */
 
     slot = ti_Open(av_name, "w");
     if (!slot) return false;

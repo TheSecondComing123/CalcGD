@@ -144,7 +144,7 @@ static void draw_initial_map(void)
             if (tile_id > 0 && tile_id < NUM_GAME_TILES) {
                 int sx = col * TILE_W - gs.disp_blk_frm_x;
                 int sy = row * TILE_H;
-                draw_tile(gfx_vbuffer, sx, sy, tile_id);
+                draw_tile(GFX_VBUF, sx, sy, tile_id);
             }
         }
     }
@@ -163,7 +163,7 @@ void game_run(void)
     timer_Control = TIMER2_DISABLE;
     timer_2_Counter = gs.level_speed << 16;
     timer_2_ReloadValue = gs.level_speed << 16;
-    timer_Control = TIMER2_ENABLE | TIMER2_32K | TIMER2_DOWN | TIMER2_INT;
+    timer_Control = TIMER2_ENABLE | TIMER2_32K | TIMER2_DOWN | TIMER2_0INT;
 
     /* spawn animation: draw sprite pixel by pixel */
     const uint8_t *spr = jump_frame(0);
@@ -186,9 +186,9 @@ void game_run(void)
 static bool game_loop_tick(void)
 {
     /* wait for timer interrupt (frame sync) */
-    while (!(timer_IntStatus & TIMER2_INT))
+    while (!timer_ChkInterrupt(2, TIMER2_RELOADED))
         ;
-    timer_IntStatus = TIMER2_INT; /* acknowledge */
+    timer_AckInterrupt(2, TIMER2_RELOADED);
 
     /* scan keyboard */
     kb_Scan();
@@ -352,7 +352,7 @@ static bool game_loop_tick(void)
 static void scroll_right(void)
 {
     /* shift the visible game area left by SCROLL_SPD pixels */
-    uint8_t *buf = gfx_vbuffer;
+    uint8_t *buf = GFX_VBUF;
     for (int y = 0; y < GAME_AREA_H; y++) {
         uint8_t *row = buf + y * LCD_WIDTH;
         memmove(row, row + SCROLL_SPD, LCD_WIDTH - SCROLL_SPD);
@@ -379,7 +379,7 @@ static void draw_new_column(void)
             if (tile_id == 0 || tile_id >= NUM_GAME_TILES) {
                 /* empty tile - fill with background */
                 for (int py = 0; py < TILE_H && row * TILE_H + py < GAME_AREA_H; py++) {
-                    uint8_t *dst = gfx_vbuffer + (row * TILE_H + py) * LCD_WIDTH + draw_x;
+                    uint8_t *dst = GFX_VBUF + (row * TILE_H + py) * LCD_WIDTH + draw_x;
                     int w = SCROLL_SPD;
                     if (t == 1) w = start_col + SCROLL_SPD - TILE_W;
                     if (t == 0 && tiles_to_draw == 2) w = TILE_W - start_col;
@@ -411,7 +411,7 @@ static void draw_new_column(void)
 
             for (int py = 0; py < TILE_H && row * TILE_H + py < GAME_AREA_H; py++) {
                 const uint8_t *src_row = td + py * TILE_W + src_x_start;
-                uint8_t *dst = gfx_vbuffer + (row * TILE_H + py) * LCD_WIDTH + draw_x + dst_x_off;
+                uint8_t *dst = GFX_VBUF + (row * TILE_H + py) * LCD_WIDTH + draw_x + dst_x_off;
                 for (int px = 0; px < copy_w; px++) {
                     uint8_t c = src_row[px];
                     if (c != BG_COLOR)
@@ -447,12 +447,12 @@ static void draw_character(void)
     /* save background behind sprite */
     uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
     for (int row = 0; row < h; row++) {
-        uint8_t *screen_row = gfx_vbuffer + (sy + row) * LCD_WIDTH + SPR_POS_X;
+        uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
         memcpy(save_buf + row * w, screen_row, w);
     }
 
     /* draw sprite with transparency */
-    draw_sprite_transparent(gfx_vbuffer, SPR_POS_X, sy, spr, w, h);
+    draw_sprite_transparent(GFX_VBUF, SPR_POS_X, sy, spr, w, h);
 
     gs.current_spr_buf ^= 1;
 }
@@ -468,7 +468,7 @@ static void erase_character(void)
     /* restore background from saved buffer */
     uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
     for (int row = 0; row < h; row++) {
-        uint8_t *screen_row = gfx_vbuffer + (sy + row) * LCD_WIDTH + SPR_POS_X;
+        uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
         memcpy(screen_row, save_buf + row * w, w);
     }
 }
