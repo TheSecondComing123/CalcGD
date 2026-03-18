@@ -41,7 +41,7 @@ static const int16_t jump_lut_rvrs[] = {
 #define SPD_TO_PX(s)  ((int24_t)(s) * LCD_WIDTH)
 
 /* tick result */
-enum tick_result { TICK_CONTINUE, TICK_DIED, TICK_QUIT, TICK_DONE };
+enum tick_result { TICK_CONTINUE, TICK_DIED, TICK_QUIT, TICK_DONE, TICK_PRACTICE_DIED };
 
 /* forward declarations */
 static void game_init(void);
@@ -61,6 +61,8 @@ static void spaceship_off(void);
 static void game_pause(void);
 static void game_die(void);
 static void game_level_done(void);
+static void save_checkpoint(void);
+static void restore_checkpoint(void);
 
 /* read a pixel from the current draw buffer */
 static inline uint8_t read_pixel(int x, int y)
@@ -159,6 +161,7 @@ static void draw_initial_map(void)
 void game_run(void)
 {
     gs.attempts = 0;
+    gs.checkpoint.valid = false;
 
     while (true) {
         gs.attempts++;
@@ -178,6 +181,15 @@ void game_run(void)
         enum tick_result result;
         do {
             result = game_loop_tick();
+
+            /* practice mode: respawn at checkpoint on death */
+            if (result == TICK_PRACTICE_DIED) {
+                gs.attempts++;
+                restore_checkpoint();
+                clear_game_screen();
+                draw_initial_map();
+                result = TICK_CONTINUE;
+            }
         } while (result == TICK_CONTINUE);
 
         /* disable timer */
@@ -187,6 +199,7 @@ void game_run(void)
             break;
 
         /* TICK_DIED: show death screen with attempt count, then retry */
+        /* in practice mode without a checkpoint, also restart from beginning */
     }
 }
 
@@ -203,6 +216,14 @@ static enum tick_result game_loop_tick(void)
     /* check quit keys */
     if (kb_IsDown(kb_KeyClear) || kb_IsDown(kb_KeyMode))
         return TICK_QUIT;
+
+    /* practice mode: place checkpoint with Alpha key */
+    if (gs.flags.practice_mode && kb_IsDown(kb_KeyAlpha)) {
+        save_checkpoint();
+        /* brief green flash at top-right to confirm */
+        gfx_SetColor(0x05); /* green */
+        gfx_FillRectangle_NoClip(LCD_WIDTH - 12, 2, 10, 10);
+    }
 
     /* check pause */
     if (kb_IsDown(kb_KeyEnter)) {
@@ -324,6 +345,8 @@ static enum tick_result game_loop_tick(void)
 
     if (died) {
         game_die();
+        if (gs.flags.practice_mode && gs.checkpoint.valid)
+            return TICK_PRACTICE_DIED;
         return TICK_DIED;
     }
 
@@ -336,6 +359,13 @@ static enum tick_result game_loop_tick(void)
 
     /* draw sprite at new position */
     draw_character();
+
+    /* practice mode indicator: small "P" in top-right corner */
+    if (gs.flags.practice_mode) {
+        gfx_SetTextFGColor(0x05); /* green */
+        gfx_SetTextBGColor(BG_COLOR);
+        gfx_PrintStringXY("P", LCD_WIDTH - 10, 2);
+    }
 
     /* swap display buffers */
     page_flip();
@@ -692,16 +722,40 @@ static void spaceship_off(void)
 
 static void game_pause(void)
 {
-    /* simple pause: wait until Enter is released, then wait for it again */
     while (kb_IsDown(kb_KeyEnter)) kb_Scan();
+
+    /* draw pause overlay */
+    gfx_SetTextFGColor(0x06); /* white */
+    gfx_SetTextBGColor(0x09); /* black */
+    gfx_SetTextScale(2, 2);
+    gfx_PrintStringXY("PAUSED", (LCD_WIDTH - gfx_GetStringWidth("PAUSED")) / 2, 80);
+    gfx_SetTextScale(1, 1);
+    const char *prac_msg = gs.flags.practice_mode ?
+        "[Alpha] Practice: ON" : "[Alpha] Practice: OFF";
+    gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
+    gfx_PrintStringXY("[Enter] Resume", (LCD_WIDTH - gfx_GetStringWidth("[Enter] Resume")) / 2, 140);
+    gfx_SwapDraw();
 
     while (true) {
         kb_Scan();
         if (kb_IsDown(kb_KeyEnter)) break;
         if (kb_IsDown(kb_KeyClear) || kb_IsDown(kb_KeyMode)) break;
+        if (kb_IsDown(kb_KeyAlpha)) {
+            gs.flags.practice_mode = !gs.flags.practice_mode;
+            if (!gs.flags.practice_mode)
+                gs.checkpoint.valid = false;
+            while (kb_IsDown(kb_KeyAlpha)) kb_Scan();
+            /* redraw toggle text */
+            prac_msg = gs.flags.practice_mode ?
+                "[Alpha] Practice: ON " : "[Alpha] Practice: OFF";
+            gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
+            gfx_SwapDraw();
+            gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
+            gfx_SwapDraw();
+        }
     }
 
-    while (kb_IsDown(kb_KeyEnter) || kb_IsDown(kb_KeyClear)) kb_Scan();
+    while (kb_AnyKey()) kb_Scan();
 }
 
 #define DEATH_PARTICLES 16
@@ -713,6 +767,62 @@ typedef struct {
     uint8_t size;
     uint8_t color;
 } particle_t;
+
+static void save_checkpoint(void)
+{
+    checkpoint_t *cp = &gs.checkpoint;
+    cp->first_block = gs.first_block;
+    cp->char_pos_y = gs.char_pos_y;
+    cp->bytes_to_skip = gs.bytes_to_skip;
+    cp->disp_blk_frm_x = gs.disp_blk_frm_x;
+    cp->disp_blk_frm_y = gs.disp_blk_frm_y;
+    cp->jmp_speed_idx = gs.jmp_speed_idx;
+    cp->spr_frame = gs.spr_frame;
+    cp->gravity_reversed = gs.flags.gravity_reversed;
+    cp->spaceship_on = gs.flags.spaceship_on;
+    cp->num_gravity_remaining = gs.num_gravity_remaining;
+    cp->addr_gravity = gs.addr_gravity;
+    cp->num_ship_remaining = gs.num_ship_remaining;
+    cp->addr_spaceship = gs.addr_spaceship;
+    cp->valid = true;
+}
+
+static void restore_checkpoint(void)
+{
+    checkpoint_t *cp = &gs.checkpoint;
+    if (!cp->valid) return;
+
+    gs.first_block = cp->first_block;
+    gs.char_pos_y = cp->char_pos_y;
+    gs.prev_pos_y = cp->char_pos_y;
+    gs.bytes_to_skip = cp->bytes_to_skip;
+    gs.disp_blk_frm_x = cp->disp_blk_frm_x;
+    gs.disp_blk_frm_y = cp->disp_blk_frm_y;
+    gs.jmp_speed_idx = cp->jmp_speed_idx;
+    gs.spr_frame = cp->spr_frame;
+    gs.prev_spr_frame = cp->spr_frame;
+    gs.flags.gravity_reversed = cp->gravity_reversed;
+    gs.flags.spaceship_on = cp->spaceship_on;
+    gs.num_gravity_remaining = cp->num_gravity_remaining;
+    gs.addr_gravity = cp->addr_gravity;
+    gs.num_ship_remaining = cp->num_ship_remaining;
+    gs.addr_spaceship = cp->addr_spaceship;
+
+    gs.sprite_size = cp->spaceship_on ? SHIP_W : SPR_W;
+    gs.flags.jumping = true;
+    gs.flags.jump_again = false;
+    gs.flags.top_reached = false;
+    gs.flags.bot_reached = false;
+    gs.flags.already_erased = false;
+    gs.flags.jump_used = false;
+    gs.prev_speed = 0;
+    gs.prev_speed_div320 = 0;
+    gs.mn = 0;
+    gs.current_spr_buf = 0;
+
+    memset(gs.behind_spr1, BG_COLOR, sizeof(gs.behind_spr1));
+    memset(gs.behind_spr2, BG_COLOR, sizeof(gs.behind_spr2));
+}
 
 static void game_die(void)
 {

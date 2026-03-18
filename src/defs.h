@@ -91,7 +91,26 @@ typedef struct {
     bool jump_used;
     bool ship_available;
     bool in_editor;
+    bool practice_mode;
 } game_flags_t;
+
+/* practice mode checkpoint */
+typedef struct {
+    uint8_t *first_block;
+    uint24_t char_pos_y;
+    uint24_t bytes_to_skip;
+    uint8_t  disp_blk_frm_x;
+    uint8_t  disp_blk_frm_y;
+    int24_t  jmp_speed_idx;
+    uint8_t  spr_frame;
+    bool     gravity_reversed;
+    bool     spaceship_on;
+    uint8_t  num_gravity_remaining;
+    uint8_t *addr_gravity;
+    uint8_t  num_ship_remaining;
+    uint8_t *addr_spaceship;
+    bool     valid;
+} checkpoint_t;
 
 /* level info stored in menu */
 typedef struct {
@@ -160,6 +179,9 @@ typedef struct {
 
     /* attempt counter */
     uint24_t attempts;
+
+    /* practice mode checkpoint */
+    checkpoint_t checkpoint;
 } game_state_t;
 
 /* menu state */
