@@ -704,6 +704,16 @@ static void game_pause(void)
     while (kb_IsDown(kb_KeyEnter) || kb_IsDown(kb_KeyClear)) kb_Scan();
 }
 
+#define DEATH_PARTICLES 16
+#define DEATH_FRAMES    12
+
+typedef struct {
+    int16_t x, y;
+    int8_t  vx, vy;
+    uint8_t size;
+    uint8_t color;
+} particle_t;
+
 static void game_die(void)
 {
     /* save progress */
@@ -716,12 +726,50 @@ static void game_die(void)
         score_update(id, map_col);
     }
 
-    /* brief flash effect */
-    gfx_SetColor(0x06); /* white */
-    gfx_FillRectangle_NoClip(SPR_POS_X - 5, gs.char_pos_y - 5,
-                              gs.sprite_size + 10, gs.sprite_size + 10);
-    gfx_SwapDraw();
-    delay(150);
+    /* particle explosion from player center */
+    int cx = SPR_POS_X + gs.sprite_size / 2;
+    int cy = gs.char_pos_y + gs.sprite_size / 2;
+
+    particle_t parts[DEATH_PARTICLES];
+    for (int i = 0; i < DEATH_PARTICLES; i++) {
+        parts[i].x = cx;
+        parts[i].y = cy;
+        /* spread velocities in a ring pattern */
+        int angle_idx = i * 8 / DEATH_PARTICLES;
+        static const int8_t dx[] = { 4, 3, 0, -3, -4, -3, 0, 3 };
+        static const int8_t dy[] = { 0, -3, -4, -3, 0, 3, 4, 3 };
+        parts[i].vx = dx[angle_idx] + (i & 1 ? 1 : -1);
+        parts[i].vy = dy[angle_idx] + (i & 1 ? -1 : 1);
+        parts[i].size = 3 + (i % 3);
+        parts[i].color = (i & 1) ? 0x06 : 0x09; /* white / black */
+    }
+
+    for (int frame = 0; frame < DEATH_FRAMES; frame++) {
+        /* erase player sprite area */
+        gfx_SetColor(BG_COLOR);
+        gfx_FillRectangle_NoClip(SPR_POS_X - 2, gs.char_pos_y - 2,
+                                  gs.sprite_size + 4, gs.sprite_size + 4);
+
+        /* draw particles */
+        for (int i = 0; i < DEATH_PARTICLES; i++) {
+            parts[i].x += parts[i].vx;
+            parts[i].y += parts[i].vy;
+            parts[i].vy += 1; /* gravity */
+
+            int sz = parts[i].size - frame / 4;
+            if (sz < 1) sz = 1;
+
+            int px = parts[i].x - sz / 2;
+            int py = parts[i].y - sz / 2;
+            if (px >= 0 && px + sz < LCD_WIDTH && py >= 0 && py + sz < LCD_HEIGHT) {
+                gfx_SetColor(parts[i].color);
+                gfx_FillRectangle_NoClip(px, py, sz, sz);
+            }
+        }
+
+        gfx_SwapDraw();
+        delay(40);
+    }
 
     /* show attempt count */
     char buf[16];
@@ -732,7 +780,6 @@ static void game_die(void)
     int tw = gfx_GetStringWidth(buf);
     gfx_PrintStringXY(buf, (LCD_WIDTH - tw) / 2, LCD_HEIGHT / 2 - 8);
     gfx_SwapDraw();
-    /* show on both buffers */
     gfx_PrintStringXY(buf, (LCD_WIDTH - tw) / 2, LCD_HEIGHT / 2 - 8);
     gfx_SetTextScale(1, 1);
     delay(800);
