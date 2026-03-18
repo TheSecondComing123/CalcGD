@@ -33,6 +33,10 @@ On OS 5.5+, you need [arTIfiCE](https://yvantt.github.io/arTIfiCE/) installed fi
 - **+**: create new level
 - **alpha**: edit selected level
 
+### practice mode
+
+Press **enter** to pause, then **alpha** to toggle practice mode on/off. While playing in practice mode, press **alpha** to place a checkpoint. On death you respawn at the last checkpoint instead of restarting the level.
+
 ## license
 
 Original game: CC BY-NC-SA 4.0
