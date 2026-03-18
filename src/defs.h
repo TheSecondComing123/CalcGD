@@ -157,6 +157,9 @@ typedef struct {
 
     /* editor: start offset for play-from-position */
     uint24_t beg_lvl_to_play;
+
+    /* attempt counter */
+    uint24_t attempts;
 } game_state_t;
 
 /* menu state */

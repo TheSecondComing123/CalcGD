@@ -2,6 +2,7 @@
 #include <graphx.h>
 #include <keypadc.h>
 #include <string.h>
+#include <stdio.h>
 
 #include "defs.h"
 #include "gfx.h"
@@ -39,9 +40,12 @@ static const int16_t jump_lut_rvrs[] = {
 /* convert LUT speed entry to pixel offset (speed * LCD_WIDTH) */
 #define SPD_TO_PX(s)  ((int24_t)(s) * LCD_WIDTH)
 
+/* tick result */
+enum tick_result { TICK_CONTINUE, TICK_DIED, TICK_QUIT, TICK_DONE };
+
 /* forward declarations */
 static void game_init(void);
-static bool game_loop_tick(void);
+static enum tick_result game_loop_tick(void);
 static void draw_character(void);
 static void erase_character(void);
 static void scroll_right(void);
@@ -154,36 +158,39 @@ static void draw_initial_map(void)
 
 void game_run(void)
 {
-    set_game_palette();
-    clear_game_screen();
-    game_init();
-    draw_initial_map();
+    gs.attempts = 0;
 
-    /* set up timer for frame sync */
-    timer_Control = TIMER2_DISABLE;
-    timer_2_Counter = gs.level_speed << 16;
-    timer_2_ReloadValue = gs.level_speed << 16;
-    timer_Control = TIMER2_ENABLE | TIMER2_32K | TIMER2_DOWN | TIMER2_0INT;
+    while (true) {
+        gs.attempts++;
 
-    /* spawn animation: draw sprite pixel by pixel */
-    const uint8_t *spr = jump_frame(0);
-    for (int row = 0; row < SPR_H; row++) {
-        for (int col = 0; col < SPR_W; col++) {
-            uint8_t px = spr[row * SPR_W + col];
-            gfx_SetColor(px);
-            gfx_SetPixel(SPR_POS_X + col, gs.char_pos_y / LCD_WIDTH * 0 + (gs.char_pos_y % LCD_HEIGHT) + row); /* simplified */
-        }
+        set_game_palette();
+        clear_game_screen();
+        game_init();
+        draw_initial_map();
+
+        /* set up timer for frame sync */
+        timer_Control = TIMER2_DISABLE;
+        timer_2_Counter = gs.level_speed << 16;
+        timer_2_ReloadValue = gs.level_speed << 16;
+        timer_Control = TIMER2_ENABLE | TIMER2_32K | TIMER2_DOWN | TIMER2_0INT;
+
+        /* main game loop */
+        enum tick_result result;
+        do {
+            result = game_loop_tick();
+        } while (result == TICK_CONTINUE);
+
+        /* disable timer */
+        timer_Control = TIMER2_DISABLE;
+
+        if (result == TICK_QUIT || result == TICK_DONE)
+            break;
+
+        /* TICK_DIED: show death screen with attempt count, then retry */
     }
-
-    /* main game loop */
-    while (game_loop_tick())
-        ;
-
-    /* disable timer */
-    timer_Control = TIMER2_DISABLE;
 }
 
-static bool game_loop_tick(void)
+static enum tick_result game_loop_tick(void)
 {
     /* wait for timer interrupt (frame sync) */
     while (!timer_ChkInterrupt(2, TIMER2_RELOADED))
@@ -195,12 +202,12 @@ static bool game_loop_tick(void)
 
     /* check quit keys */
     if (kb_IsDown(kb_KeyClear) || kb_IsDown(kb_KeyMode))
-        return false;
+        return TICK_QUIT;
 
     /* check pause */
     if (kb_IsDown(kb_KeyEnter)) {
         game_pause();
-        return true;
+        return TICK_CONTINUE;
     }
 
     /* check jump/action */
@@ -296,7 +303,7 @@ static bool game_loop_tick(void)
     /* check level completion */
     if (map_col >= gs.map_size_x - 1) {
         game_level_done();
-        return false;
+        return TICK_DONE;
     }
 
     /* scroll the draw buffer left */
@@ -317,7 +324,7 @@ static bool game_loop_tick(void)
 
     if (died) {
         game_die();
-        return false;
+        return TICK_DIED;
     }
 
     /* handle jump pads (on ground) */
@@ -346,7 +353,7 @@ static bool game_loop_tick(void)
             gs.jmp_speed_idx = JUMP_LUT_SIZE - 1;
     }
 
-    return true;
+    return TICK_CONTINUE;
 }
 
 static void scroll_right(void)
@@ -714,7 +721,21 @@ static void game_die(void)
     gfx_FillRectangle_NoClip(SPR_POS_X - 5, gs.char_pos_y - 5,
                               gs.sprite_size + 10, gs.sprite_size + 10);
     gfx_SwapDraw();
-    delay(200);
+    delay(150);
+
+    /* show attempt count */
+    char buf[16];
+    sprintf(buf, "Attempt %lu", (unsigned long)gs.attempts);
+    gfx_SetTextFGColor(0x06); /* white */
+    gfx_SetTextBGColor(BG_COLOR);
+    gfx_SetTextScale(2, 2);
+    int tw = gfx_GetStringWidth(buf);
+    gfx_PrintStringXY(buf, (LCD_WIDTH - tw) / 2, LCD_HEIGHT / 2 - 8);
+    gfx_SwapDraw();
+    /* show on both buffers */
+    gfx_PrintStringXY(buf, (LCD_WIDTH - tw) / 2, LCD_HEIGHT / 2 - 8);
+    gfx_SetTextScale(1, 1);
+    delay(800);
 }
 
 static void game_level_done(void)
