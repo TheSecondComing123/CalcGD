@@ -1,0 +1,6 @@
+*.zip
+obj/
+bin/
+*.8xp
+*.8xg
+
