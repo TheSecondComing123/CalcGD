@@ -80,6 +80,8 @@ static const uint16_t menu_pal[256] = {
     0x7366, 0xAC6B, 0xE802, 0xD24C, 0xA907, 0x23A4, 0x2BD4, 0xD047
 };
 
+static bool gfx_started = false;
+
 void extract_rle(const uint8_t *src, uint8_t *dst, uint24_t num_pairs)
 {
     for (uint24_t i = 0; i < num_pairs; i++) {
@@ -90,7 +92,33 @@ void extract_rle(const uint8_t *src, uint8_t *dst, uint24_t num_pairs)
     }
 }
 
-static bool load_appvar_rle(const char *name, uint8_t *dst, uint8_t header_skip)
+static bool extract_rle_checked(const uint8_t *src, uint24_t src_len,
+                                uint8_t *dst, uint24_t num_pairs,
+                                uint24_t dst_cap)
+{
+    uint24_t written = 0;
+    uint24_t read_off = 0;
+
+    for (uint24_t i = 0; i < num_pairs; i++) {
+        if (read_off + 2 > src_len)
+            return false;
+
+        uint8_t count = *src++;
+        uint8_t value = *src++;
+        read_off += 2;
+
+        if ((uint24_t)count > dst_cap - written)
+            return false;
+
+        memset(dst + written, value, count);
+        written += count;
+    }
+
+    return true;
+}
+
+static bool load_appvar_rle(const char *name, uint8_t *dst, uint8_t header_skip,
+                            uint24_t dst_cap)
 {
     ti_var_t slot = ti_Open(name, "r");
     if (!slot) return false;
@@ -102,7 +130,18 @@ static bool load_appvar_rle(const char *name, uint8_t *dst, uint8_t header_skip)
     ti_Read(&num_pairs, 3, 1, slot);
 
     /* read remaining data into a temp buffer and decompress */
-    uint24_t remaining = ti_GetSize(slot) - ti_Tell(slot);
+    uint24_t tell = ti_Tell(slot);
+    uint24_t size = ti_GetSize(slot);
+    if (tell > size) {
+        ti_Close(slot);
+        return false;
+    }
+    uint24_t remaining = size - tell;
+    if (remaining == 0) {
+        ti_Close(slot);
+        return false;
+    }
+
     uint8_t *rle_buf = malloc(remaining);
     if (!rle_buf) {
         ti_Close(slot);
@@ -111,9 +150,9 @@ static bool load_appvar_rle(const char *name, uint8_t *dst, uint8_t header_skip)
     ti_Read(rle_buf, remaining, 1, slot);
     ti_Close(slot);
 
-    extract_rle(rle_buf, dst, num_pairs);
+    bool ok = extract_rle_checked(rle_buf, remaining, dst, num_pairs, dst_cap);
     free(rle_buf);
-    return true;
+    return ok;
 }
 
 void set_game_palette(void)
@@ -128,11 +167,15 @@ void set_menu_palette(void)
 
 bool gfx_game_init(void)
 {
-    gfx_Begin();
+    if (!gfx_started) {
+        gfx_Begin();
+        gfx_started = true;
+    }
+
     set_game_palette();
 
     /* load game graphics: skip 17 bytes of AppVar header */
-    if (!load_appvar_rle("GDGrphc", TILES_GAME_BUF, 17))
+    if (!load_appvar_rle("GDGrphc", TILES_GAME_BUF, 17, GAME_GFX_SIZE))
         return false;
 
     return true;
@@ -141,12 +184,15 @@ bool gfx_game_init(void)
 bool gfx_menu_init(void)
 {
     /* load menu graphics: skip 16 bytes of AppVar header */
-    return load_appvar_rle("GDMenu", TILES_MENU_BUF, 16);
+    return load_appvar_rle("GDMenu", TILES_MENU_BUF, 16, MENU_GFX_SIZE);
 }
 
 void gfx_cleanup(void)
 {
-    gfx_End();
+    if (gfx_started) {
+        gfx_End();
+        gfx_started = false;
+    }
 }
 
 const uint8_t *tile_data(uint8_t id)

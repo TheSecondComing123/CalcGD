@@ -10,6 +10,9 @@ void level_scan(void);
    populates gs map fields. returns false if level data is invalid. */
 bool level_load(uint8_t level_idx);
 
+/* close the currently loaded level AppVar slot, if any */
+void level_unload(void);
+
 /* find high score for a given level ID in the GeomDash AppVar.
    returns the high score value, or 0 if not found. */
 uint24_t score_find(uint24_t level_id);

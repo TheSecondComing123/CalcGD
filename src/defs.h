@@ -56,7 +56,9 @@
 
 /* safe RAM areas for decompressed graphics */
 #define TILES_GAME_BUF   ((uint8_t*)0xD03B56)
-#define TILES_MENU_BUF   ((uint8_t*)0xD09466)
+/* menu/game graphics share one scratch region; assets are reloaded
+   on mode switch to avoid overlap corruption */
+#define TILES_MENU_BUF   TILES_GAME_BUF
 
 /* derived sizes */
 #define GAME_AREA_H      (TILE_H * WIN_ROWS)
@@ -68,6 +70,11 @@
 #define OFF_FONT         0
 #define OFF_MENU_TILES   (FONT_W * FONT_H * NUM_FONT_CHARS)
 
+/* decompressed graphics buffer capacities */
+#define GAME_GFX_SIZE    (OFF_SHIP + SHIP_W * SHIP_H * NUM_SHIP_FRAMES)
+#define MENU_GFX_USED    16774
+#define MENU_GFX_SIZE    (OFF_MENU_TILES + MENU_GFX_USED)
+
 /* jump speed lookup table */
 #define JUMP_LUT_SIZE    40
 
@@ -75,6 +82,7 @@
 #define LEVEL_SIG_BYTE   0xFF
 #define LEVEL_SIG_STR    "Epharius"
 #define LEVEL_SIG_TAG    "GD"
+#define LEVEL_SIG_LEN    12
 
 /* direction flags */
 typedef struct {
@@ -96,7 +104,7 @@ typedef struct {
 
 /* practice mode checkpoint */
 typedef struct {
-    uint8_t *first_block;
+    uint24_t first_block_off;
     uint24_t char_pos_y;
     uint24_t bytes_to_skip;
     uint8_t  disp_blk_frm_x;
@@ -106,17 +114,22 @@ typedef struct {
     bool     gravity_reversed;
     bool     spaceship_on;
     uint8_t  num_gravity_remaining;
-    uint8_t *addr_gravity;
+    uint24_t addr_gravity_off;
     uint8_t  num_ship_remaining;
-    uint8_t *addr_spaceship;
+    uint24_t addr_spaceship_off;
     bool     valid;
 } checkpoint_t;
 
 /* level info stored in menu */
 typedef struct {
-    uint8_t *data_addr;
-    uint8_t *after_name_addr;
-    uint8_t *vat_name_addr;
+    char     vat_name[9];
+    uint8_t  name_line1[8];
+    uint8_t  name_len1;
+    uint8_t  name_line2[8];
+    uint8_t  name_len2;
+    uint8_t  difficulty;
+    uint24_t level_id;
+    uint24_t map_size_x;
 } level_entry_t;
 
 /* tail particle */
@@ -130,6 +143,7 @@ typedef struct {
     /* map */
     uint8_t *first_block;
     uint8_t *beginning_map;
+    uint24_t map_data_off;
     uint24_t map_size_x;
     uint24_t bytes_to_skip;
     uint24_t max_bytes_to_skip;
@@ -147,8 +161,11 @@ typedef struct {
     /* gravity & vehicle context */
     uint8_t *addr_gravity;
     uint8_t  num_gravity_remaining;
+    uint24_t addr_gravity_base_off;
+    uint8_t  num_gravity_total;
     uint8_t *addr_spaceship;
     uint8_t  num_ship_remaining;
+    uint24_t addr_spaceship_base_off;
     uint8_t  num_ship_total;
 
     /* scroll sync */

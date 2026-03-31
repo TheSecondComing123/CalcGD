@@ -17,6 +17,7 @@ int main(void)
     os_ClrHome();
 
     if (!gfx_game_init()) {
+        gfx_cleanup();
         os_ClrHome();
         os_PutStrFull("Need AppVar GDGrphc");
         while (!os_GetCSC());

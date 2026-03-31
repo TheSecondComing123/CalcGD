@@ -87,7 +87,14 @@ static inline uint8_t read_pixel(int x, int y)
 
 static void game_init(void)
 {
+    bool ship_available = gs.flags.ship_available;
+    bool in_editor = gs.flags.in_editor;
+    bool practice_mode = gs.flags.practice_mode;
+
     memset(&gs.flags, 0, sizeof(gs.flags));
+    gs.flags.ship_available = ship_available;
+    gs.flags.in_editor = in_editor;
+    gs.flags.practice_mode = practice_mode;
 
     gs.disp_blk_frm_x = 0;
     gs.disp_blk_frm_y = 0;
@@ -111,6 +118,15 @@ static void game_init(void)
     /* set starting map position */
     uint8_t *map = gs.beginning_map;
     gs.first_block = map + gs.bytes_to_skip + gs.beg_lvl_to_play;
+
+    /* reset context pointers/counters to level starts */
+    gs.num_gravity_remaining = gs.num_gravity_total;
+    gs.addr_gravity = gs.beginning_map + gs.addr_gravity_base_off;
+
+    if (gs.flags.ship_available) {
+        gs.num_ship_remaining = gs.num_ship_total;
+        gs.addr_spaceship = gs.beginning_map + gs.addr_spaceship_base_off;
+    }
 
     /* clear behind-sprite buffers */
     memset(gs.behind_spr1, BG_COLOR, sizeof(gs.behind_spr1));
@@ -178,10 +194,18 @@ static void clear_game_screen(void)
 /* draw the initial visible portion of the map */
 static void draw_initial_map(void)
 {
+    uint24_t base_col = gs.first_block - gs.beginning_map;
+    if (base_col >= gs.bytes_to_skip)
+        base_col -= gs.bytes_to_skip;
+
     for (int col = 0; col <= WIN_COLS; col++) {
+        uint24_t abs_col = base_col + col;
+        if (abs_col >= gs.map_size_x)
+            continue;
+
         for (int row = 0; row < WIN_ROWS; row++) {
-            uint24_t map_offset = (uint24_t)row * gs.map_size_x + col;
-            uint8_t *block_ptr = gs.first_block - gs.bytes_to_skip + map_offset;
+            uint24_t map_offset = (uint24_t)row * gs.map_size_x + abs_col;
+            uint8_t *block_ptr = gs.beginning_map + map_offset;
             uint8_t tile_id = *block_ptr;
             if (tile_id > 0 && tile_id < NUM_GAME_TILES) {
                 int sx = col * TILE_W - gs.disp_blk_frm_x;
@@ -200,6 +224,9 @@ void game_run(void)
     gs.checkpoint.valid = false;
 
     while (true) {
+        if (!level_load(ms.current_idx))
+            break;
+
         gs.attempts++;
 
         set_game_palette();
@@ -237,6 +264,8 @@ void game_run(void)
         /* TICK_DIED: show death screen with attempt count, then retry */
         /* in practice mode without a checkpoint, also restart from beginning */
     }
+
+    level_unload();
 }
 
 static enum tick_result game_loop_tick(void)
@@ -437,7 +466,7 @@ static void draw_new_column(void)
     /* draw the SCROLL_SPD pixel-wide strip on the right edge */
     int draw_x = LCD_WIDTH - SCROLL_SPD;
 
-    for (int row = 0; row < WIN_ROWS + 1; row++) {
+    for (int row = 0; row < WIN_ROWS; row++) {
         uint8_t *map_ptr = gs.first_block - gs.bytes_to_skip + (uint24_t)row * gs.map_size_x;
 
         /* figure out which tile(s) to draw */
@@ -555,7 +584,7 @@ static void erase_character(void)
     if (sy < 0 || sy + SPR_H > LCD_HEIGHT) return;
 
     /* restore background (always full 30x30, matching draw_character) */
-    uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
+    uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr2 : gs.behind_spr1;
     for (int row = 0; row < SPR_H; row++) {
         uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
         memcpy(screen_row, save_buf + row * SPR_W, SPR_W);
@@ -828,7 +857,7 @@ typedef struct {
 static void save_checkpoint(void)
 {
     checkpoint_t *cp = &gs.checkpoint;
-    cp->first_block = gs.first_block;
+    cp->first_block_off = gs.first_block - gs.beginning_map;
     cp->char_pos_y = gs.char_pos_y;
     cp->bytes_to_skip = gs.bytes_to_skip;
     cp->disp_blk_frm_x = gs.disp_blk_frm_x;
@@ -838,9 +867,9 @@ static void save_checkpoint(void)
     cp->gravity_reversed = gs.flags.gravity_reversed;
     cp->spaceship_on = gs.flags.spaceship_on;
     cp->num_gravity_remaining = gs.num_gravity_remaining;
-    cp->addr_gravity = gs.addr_gravity;
+    cp->addr_gravity_off = gs.addr_gravity - gs.beginning_map;
     cp->num_ship_remaining = gs.num_ship_remaining;
-    cp->addr_spaceship = gs.addr_spaceship;
+    cp->addr_spaceship_off = gs.addr_spaceship ? (gs.addr_spaceship - gs.beginning_map) : 0;
     cp->valid = true;
 }
 
@@ -849,7 +878,7 @@ static void restore_checkpoint(void)
     checkpoint_t *cp = &gs.checkpoint;
     if (!cp->valid) return;
 
-    gs.first_block = cp->first_block;
+    gs.first_block = gs.beginning_map + cp->first_block_off;
     gs.char_pos_y = cp->char_pos_y;
     gs.prev_pos_y = cp->char_pos_y;
     gs.bytes_to_skip = cp->bytes_to_skip;
@@ -861,9 +890,9 @@ static void restore_checkpoint(void)
     gs.flags.gravity_reversed = cp->gravity_reversed;
     gs.flags.spaceship_on = cp->spaceship_on;
     gs.num_gravity_remaining = cp->num_gravity_remaining;
-    gs.addr_gravity = cp->addr_gravity;
+    gs.addr_gravity = gs.beginning_map + cp->addr_gravity_off;
     gs.num_ship_remaining = cp->num_ship_remaining;
-    gs.addr_spaceship = cp->addr_spaceship;
+    gs.addr_spaceship = cp->addr_spaceship_off ? (gs.beginning_map + cp->addr_spaceship_off) : NULL;
 
     gs.sprite_size = cp->spaceship_on ? SHIP_W : SPR_W;
     gs.flags.jumping = true;
@@ -888,7 +917,7 @@ static void game_die(void)
     if (map_col >= gs.bytes_to_skip)
         map_col -= gs.bytes_to_skip;
 
-    if (!gs.flags.in_editor) {
+    if (!gs.flags.in_editor && !gs.flags.practice_mode) {
         uint24_t id = level_get_id(ms.current_idx);
         score_update(id, map_col);
     }
@@ -939,8 +968,8 @@ static void game_die(void)
     }
 
     /* show attempt count */
-    char buf[16];
-    sprintf(buf, "Attempt %lu", (unsigned long)gs.attempts);
+    char buf[20];
+    snprintf(buf, sizeof(buf), "Attempt %lu", (unsigned long)gs.attempts);
     gfx_SetTextFGColor(0x06); /* white */
     gfx_SetTextBGColor(BG_COLOR);
     gfx_SetTextScale(2, 2);

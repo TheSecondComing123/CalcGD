@@ -36,7 +36,7 @@ void menu_run(void)
 {
     /* load menu graphics */
     if (!gfx_menu_init()) {
-        gfx_End();
+        gfx_cleanup();
         os_ClrHome();
         os_PutStrFull("Need AppVar GDMenu");
         while (!os_GetCSC());
@@ -114,19 +114,15 @@ void menu_run(void)
         if (quit) return;
 
         if (play) {
-            if (level_load(ms.current_idx)) {
-                gs.beg_lvl_to_play = 0;
-                gs.flags.in_editor = false;
-                gfx_game_init(); /* reload game sprites (menu overwrites them) */
-                game_run();
-            }
+            gs.beg_lvl_to_play = 0;
+            gs.flags.in_editor = false;
+            gfx_game_init(); /* reload game sprites (menu overwrites them) */
+            game_run();
             continue; /* return to menu */
         }
 
         if (edit) {
-            if (level_load(ms.current_idx)) {
-                editor_run(ms.levels[ms.current_idx].after_name_addr);
-            }
+            editor_run(ms.current_idx);
             continue;
         }
 
@@ -207,14 +203,14 @@ static void draw_level_info(void)
     uint24_t high_score = score_find(level_id);
 
     if (high_score > 0) {
-        /* load level to get map_size_x for percentage calc */
-        level_entry_t *le = &ms.levels[ms.current_idx];
-        uint8_t *p = le->after_name_addr + 1 + 3 + 1; /* skip diff, id, speed */
-        uint24_t map_sx = p[0] | ((uint24_t)p[1] << 8) | ((uint24_t)p[2] << 16);
+        uint24_t map_sx = ms.levels[ms.current_idx].map_size_x;
 
         uint8_t pct = 0;
-        if (map_sx > 0)
-            pct = (uint8_t)((high_score * 21) / map_sx);
+        if (map_sx > 0) {
+            uint32_t scaled = ((uint32_t)high_score * 21u) / (uint32_t)map_sx;
+            if (scaled > 21u) scaled = 21u;
+            pct = (uint8_t)scaled;
+        }
         if (pct > 21) pct = 21;
 
         for (uint8_t i = 0; i < pct; i++) {
@@ -289,7 +285,8 @@ static void menu_create_level(void)
             /* ENTER */
             if (second_line) {
                 /* create the level */
-                if (level_create(name_buf, difficulty))
+                uint8_t total_name = 1 + name_buf[0] + 1 + name_buf[1 + name_buf[0]];
+                if (total_name <= sizeof(name_buf) && level_create(name_buf, difficulty))
                     return;
             } else if (name_buf[0] > 0) {
                 second_line = true;
@@ -312,8 +309,14 @@ static void menu_create_level(void)
             }
             if (*len_ptr < 8) {
                 (*len_ptr)++;
-                uint8_t offset = (len_ptr == &name_buf[0]) ? 0 : name_buf[0];
-                name_buf[1 + offset + *len_ptr - 1] = key;
+                uint8_t char_off;
+                if (len_ptr == &name_buf[0])
+                    char_off = 1 + *len_ptr - 1;
+                else
+                    char_off = 2 + name_buf[0] + *len_ptr - 1;
+
+                if (char_off < sizeof(name_buf))
+                    name_buf[char_off] = key;
             }
         }
     }

@@ -1,19 +1,69 @@
 #include <tice.h>
 #include <fileioc.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "defs.h"
 #include "level.h"
 
-#define SCORE_APPVAR  "GeomDash"
+#define SCORE_APPVAR "GeomDash"
 #define DATA_LEVEL_SIG "\xFF" "Epharius" "\xFF" "GD"
-#define DATA_LEVEL_SIG_LEN 12
+
+typedef struct {
+    uint8_t difficulty;
+    uint24_t level_id;
+    uint8_t level_speed;
+    uint24_t map_size_x;
+    uint8_t extra_rows;
+    uint24_t map_off;
+} level_meta_t;
+
+static ti_var_t loaded_level_slot;
+
+static bool parse_level_meta(uint8_t *data, uint24_t size, level_meta_t *meta)
+{
+    if (size < LEVEL_SIG_LEN + 1) return false;
+    if (memcmp(data, DATA_LEVEL_SIG, LEVEL_SIG_LEN) != 0) return false;
+
+    uint24_t off = LEVEL_SIG_LEN;
+
+    uint8_t len1 = data[off++];
+    if ((uint32_t)off + len1 + 1u > size) return false;
+    off += len1;
+
+    uint8_t len2 = data[off++];
+    if ((uint32_t)off + len2 + 1u + 3u + 1u + 3u + 1u > size) return false;
+    off += len2;
+
+    meta->difficulty = data[off++];
+    meta->level_id = data[off] | ((uint24_t)data[off + 1] << 8) | ((uint24_t)data[off + 2] << 16);
+    off += 3;
+
+    meta->level_speed = data[off++];
+
+    meta->map_size_x = data[off] | ((uint24_t)data[off + 1] << 8) | ((uint24_t)data[off + 2] << 16);
+    off += 3;
+    if (meta->map_size_x == 0) return false;
+
+    meta->extra_rows = data[off++];
+    meta->map_off = off;
+
+    return true;
+}
+
+void level_unload(void)
+{
+    if (loaded_level_slot) {
+        ti_Close(loaded_level_slot);
+        loaded_level_slot = 0;
+    }
+}
 
 void level_scan(void)
 {
     void *search_pos = NULL;
     char *name;
+
+    level_unload();
     ms.num_levels = 0;
 
     while ((name = ti_DetectVar(&search_pos, DATA_LEVEL_SIG, OS_TYPE_APPVAR)) != NULL) {
@@ -22,33 +72,45 @@ void level_scan(void)
         ti_var_t slot = ti_Open(name, "r");
         if (!slot) continue;
 
-        /* verify signature at start of data */
-        uint8_t sig_buf[DATA_LEVEL_SIG_LEN];
-        ti_Read(sig_buf, DATA_LEVEL_SIG_LEN, 1, slot);
-        if (memcmp(sig_buf, DATA_LEVEL_SIG, DATA_LEVEL_SIG_LEN) != 0) {
+        uint24_t size = ti_GetSize(slot);
+        uint8_t *data = ti_GetDataPtr(slot);
+
+        level_meta_t meta;
+        if (!parse_level_meta(data, size, &meta)) {
             ti_Close(slot);
             continue;
         }
 
-        /* read name: first byte is length of first line */
-        uint8_t *data_ptr = ti_GetDataPtr(slot);
         level_entry_t *le = &ms.levels[ms.num_levels];
-        le->data_addr = data_ptr;
-        /* after_name = past the signature + name data */
-        uint8_t name_len1 = data_ptr[DATA_LEVEL_SIG_LEN];
-        uint8_t *after = data_ptr + DATA_LEVEL_SIG_LEN + 1 + name_len1;
-        uint8_t name_len2 = *after;
-        if (name_len2 > 0)
-            after += 1 + name_len2;
-        else
-            after += 1;
-        le->after_name_addr = after;
+        memset(le, 0, sizeof(*le));
 
-        /* store pointer to name in VAT for editor access */
-        le->vat_name_addr = (uint8_t *)name;
+        for (uint8_t i = 0; i < 8 && name[i]; i++)
+            le->vat_name[i] = name[i];
+
+        uint24_t off = LEVEL_SIG_LEN;
+        uint8_t len1 = data[off++];
+        le->name_len1 = (len1 > 8) ? 8 : len1;
+        for (uint8_t i = 0; i < le->name_len1; i++)
+            le->name_line1[i] = data[off + i];
+        off += len1;
+
+        uint8_t len2 = data[off++];
+        le->name_len2 = (len2 > 8) ? 8 : len2;
+        for (uint8_t i = 0; i < le->name_len2; i++)
+            le->name_line2[i] = data[off + i];
+
+        le->difficulty = meta.difficulty;
+        le->level_id = meta.level_id;
+        le->map_size_x = meta.map_size_x;
 
         ms.num_levels++;
         ti_Close(slot);
+    }
+
+    if (ms.num_levels == 0) {
+        ms.current_idx = 0;
+    } else if (ms.current_idx >= ms.num_levels) {
+        ms.current_idx = 0;
     }
 }
 
@@ -56,59 +118,85 @@ bool level_load(uint8_t level_idx)
 {
     if (level_idx >= ms.num_levels) return false;
 
-    level_entry_t *le = &ms.levels[level_idx];
-    uint8_t *p = le->after_name_addr;
+    level_unload();
 
-    /* difficulty (1 byte) */
-    p++; /* skip difficulty */
+    ti_var_t slot = ti_Open(ms.levels[level_idx].vat_name, "r");
+    if (!slot) return false;
 
-    /* id (3 bytes) */
-    p += 3;
+    uint24_t size = ti_GetSize(slot);
+    uint8_t *data = ti_GetDataPtr(slot);
+    level_meta_t meta;
 
-    /* speed (1 byte) */
-    gs.level_speed = *p++;
+    if (!parse_level_meta(data, size, &meta)) {
+        ti_Close(slot);
+        return false;
+    }
 
-    /* map_size_x (3 bytes) */
-    gs.map_size_x = p[0] | ((uint24_t)p[1] << 8) | ((uint24_t)p[2] << 16);
-    p += 3;
-    if (gs.map_size_x == 0) return false;
+    gs.level_speed = meta.level_speed;
+    gs.map_size_x = meta.map_size_x;
+    gs.map_data_off = meta.map_off;
 
-    /* extra rows above 10 (1 byte) - currently always 0 */
-    uint8_t extra_rows = *p++;
+    gs.beginning_map = data + meta.map_off;
+    gs.first_block = NULL;
 
-    /* beginning of map data */
-    gs.beginning_map = p;
-    gs.first_block = NULL; /* set during game init */
-
-    /* compute bytes_to_skip from extra rows */
-    gs.bytes_to_skip = (uint24_t)extra_rows * gs.map_size_x;
+    gs.bytes_to_skip = (uint24_t)meta.extra_rows * gs.map_size_x;
     gs.max_bytes_to_skip = gs.bytes_to_skip;
 
-    /* find gravity and spaceship context data (after tile data) */
-    uint24_t tile_count = (uint24_t)(WIN_ROWS + extra_rows) * gs.map_size_x;
-    uint8_t *context_ptr = p + tile_count;
+    uint32_t num_rows = (uint32_t)WIN_ROWS + meta.extra_rows;
+    uint32_t tile_count32 = num_rows * (uint32_t)gs.map_size_x;
+    if (tile_count32 > 0xFFFFFFu) {
+        ti_Close(slot);
+        return false;
+    }
 
-    /* gravity contexts */
-    gs.num_gravity_remaining = *context_ptr++;
-    gs.addr_gravity = context_ptr;
-    /* each context is 3 bytes (position) */
-    context_ptr += gs.num_gravity_remaining * 3;
+    uint24_t tile_count = (uint24_t)tile_count32;
+    if ((uint32_t)meta.map_off + tile_count + 1u > size) {
+        ti_Close(slot);
+        return false;
+    }
 
-    /* spaceship contexts (only if level supports it) */
+    uint24_t context_off = meta.map_off + tile_count;
+
+    gs.num_gravity_remaining = data[context_off++];
+    gs.num_gravity_total = gs.num_gravity_remaining;
+    gs.addr_gravity_base_off = context_off;
+
+    if ((uint32_t)context_off + (uint32_t)gs.num_gravity_remaining * 3u > size) {
+        ti_Close(slot);
+        return false;
+    }
+    gs.addr_gravity = data + context_off;
+    context_off += gs.num_gravity_remaining * 3;
+
     gs.flags.ship_available = false;
+    gs.num_ship_remaining = 0;
+    gs.num_ship_total = 0;
+    gs.addr_spaceship = NULL;
+    gs.addr_spaceship_base_off = 0;
+
     if (gs.level_speed != 0) {
-        gs.num_ship_remaining = *context_ptr++;
+        if (context_off >= size) {
+            ti_Close(slot);
+            return false;
+        }
+
+        gs.num_ship_remaining = data[context_off++];
         gs.num_ship_total = gs.num_ship_remaining;
-        gs.addr_spaceship = context_ptr;
+        gs.addr_spaceship_base_off = context_off;
+
+        if ((uint32_t)context_off + (uint32_t)gs.num_ship_remaining * 3u > size) {
+            ti_Close(slot);
+            return false;
+        }
+
+        gs.addr_spaceship = data + context_off;
         gs.flags.ship_available = true;
     } else {
-        gs.num_ship_remaining = 0;
-        gs.num_ship_total = 0;
-        gs.addr_spaceship = NULL;
-        /* old version without speed field: default speed */
+        /* old version without speed field */
         gs.level_speed = 0x0E;
     }
 
+    loaded_level_slot = slot;
     return true;
 }
 
@@ -116,31 +204,32 @@ uint8_t level_get_name(uint8_t level_idx, const uint8_t **line1, uint8_t *len1,
                        const uint8_t **line2, uint8_t *len2)
 {
     if (level_idx >= ms.num_levels) {
-        *len1 = 0; *len2 = 0;
+        *line1 = NULL;
+        *line2 = NULL;
+        *len1 = 0;
+        *len2 = 0;
         return 0;
     }
 
-    uint8_t *p = ms.levels[level_idx].data_addr + DATA_LEVEL_SIG_LEN;
-    *len1 = *p++;
-    *line1 = p;
-    p += *len1;
-    *len2 = *p++;
-    *line2 = p;
+    level_entry_t *le = &ms.levels[level_idx];
+    *line1 = le->name_line1;
+    *len1 = le->name_len1;
+    *line2 = le->name_line2;
+    *len2 = le->name_len2;
 
-    return (*len2 > 0) ? 2 : 1;
+    return (le->name_len2 > 0) ? 2 : 1;
 }
 
 uint8_t level_get_difficulty(uint8_t level_idx)
 {
     if (level_idx >= ms.num_levels) return 0;
-    return *ms.levels[level_idx].after_name_addr;
+    return ms.levels[level_idx].difficulty;
 }
 
 uint24_t level_get_id(uint8_t level_idx)
 {
     if (level_idx >= ms.num_levels) return 0;
-    uint8_t *p = ms.levels[level_idx].after_name_addr + 1; /* skip difficulty */
-    return p[0] | ((uint24_t)p[1] << 8) | ((uint24_t)p[2] << 16);
+    return ms.levels[level_idx].level_id;
 }
 
 /* --- high score management --- */
@@ -154,7 +243,7 @@ uint24_t score_find(uint24_t level_id)
     if (size < 6) { ti_Close(slot); return 0; }
 
     uint8_t *data = ti_GetDataPtr(slot);
-    uint24_t count = size / 6; /* each entry: 3 bytes id + 3 bytes score */
+    uint24_t count = size / 6;
 
     for (uint24_t i = 0; i < count; i++) {
         uint8_t *entry = data + i * 6;
@@ -174,9 +263,6 @@ void score_update(uint24_t level_id, uint24_t progress)
 {
     ti_var_t slot = ti_Open(SCORE_APPVAR, "r+");
     if (!slot) {
-        /* AppVar doesn't exist yet; create it.
-           "w" is safe here because "r+" only fails when the var is absent
-           (fileioc dearchives automatically for "r+"). */
         slot = ti_Open(SCORE_APPVAR, "w");
         if (!slot) return;
     }
@@ -185,7 +271,6 @@ void score_update(uint24_t level_id, uint24_t progress)
     uint8_t *data = ti_GetDataPtr(slot);
     uint24_t count = size / 6;
 
-    /* search for existing entry */
     for (uint24_t i = 0; i < count; i++) {
         uint8_t *entry = data + i * 6;
         uint24_t id = entry[0] | ((uint24_t)entry[1] << 8) | ((uint24_t)entry[2] << 16);
@@ -202,7 +287,6 @@ void score_update(uint24_t level_id, uint24_t progress)
         }
     }
 
-    /* add new entry at end */
     ti_Seek(0, SEEK_END, slot);
     uint8_t entry[6];
     entry[0] = level_id & 0xFF;
@@ -218,12 +302,20 @@ void score_update(uint24_t level_id, uint24_t progress)
 
 bool level_create(const uint8_t *name_buf, uint8_t difficulty)
 {
-    /* name_buf format: [len1][chars...][len2][chars...] */
-    uint8_t len1 = name_buf[0];
-    uint8_t len2 = name_buf[1 + len1];
-    uint8_t total_name = 1 + len1 + 1 + len2;
+    if (!name_buf) return false;
 
-    /* build AppVar name from the level name (L + letters, max 8 chars) */
+    uint8_t len1 = name_buf[0];
+    if (len1 > 8) return false;
+
+    uint8_t len2_idx = 1 + len1;
+    if (len2_idx >= 22) return false;
+
+    uint8_t len2 = name_buf[len2_idx];
+    if (len2 > 8) return false;
+
+    uint8_t total_name = 1 + len1 + 1 + len2;
+    if (total_name > 22) return false;
+
     char av_name[9];
     av_name[0] = 'L';
     uint8_t j = 1;
@@ -234,63 +326,47 @@ bool level_create(const uint8_t *name_buf, uint8_t difficulty)
     }
     av_name[j] = 0;
 
-    /* check if name exists */
     ti_var_t slot = ti_Open(av_name, "r");
     if (slot) {
         ti_Close(slot);
-        /* try appending digits */
         for (uint8_t d = '0'; d <= '9'; d++) {
             av_name[j] = d;
             av_name[j + 1] = 0;
             slot = ti_Open(av_name, "r");
             if (!slot) break;
             ti_Close(slot);
-            if (d == '9') return false; /* all names taken */
+            if (d == '9') return false;
         }
     }
 
-    /* calculate AppVar size */
-    uint24_t map_data_size = 40 * WIN_ROWS; /* default 40 columns */
-    (void)map_data_size; /* size is implicit from sequential writes */
+    uint24_t map_data_size = 40 * WIN_ROWS;
 
     slot = ti_Open(av_name, "w");
     if (!slot) return false;
 
-    /* write signature */
-    ti_Write(DATA_LEVEL_SIG, DATA_LEVEL_SIG_LEN, 1, slot);
-
-    /* write name */
+    ti_Write(DATA_LEVEL_SIG, LEVEL_SIG_LEN, 1, slot);
     ti_Write(name_buf, total_name, 1, slot);
 
-    /* difficulty */
     ti_PutC(difficulty, slot);
 
-    /* hash ID (3 bytes) */
     uint24_t hash = 0;
     for (uint8_t i = 0; i < len1; i++)
         hash = hash * 10 + name_buf[1 + i];
-    hash |= 0xFF0000; /* ensure MSB != 0 for version detection */
+    hash |= 0xFF0000;
     uint8_t id_bytes[3] = { hash & 0xFF, (hash >> 8) & 0xFF, (hash >> 16) & 0xFF };
     ti_Write(id_bytes, 3, 1, slot);
 
-    /* speed */
     ti_PutC(15, slot);
 
-    /* map_size_x = 40 (3 bytes) */
     uint8_t sx[3] = { 40, 0, 0 };
     ti_Write(sx, 3, 1, slot);
 
-    /* extra rows = 0 */
     ti_PutC(0, slot);
 
-    /* empty tile data */
     for (uint24_t i = 0; i < map_data_size; i++)
         ti_PutC(0, slot);
 
-    /* gravity contexts: count=0 */
     ti_PutC(0, slot);
-
-    /* spaceship contexts: count=0 */
     ti_PutC(0, slot);
 
     ti_Close(slot);
