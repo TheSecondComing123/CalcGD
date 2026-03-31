@@ -22,6 +22,11 @@ static const uint8_t TXT_EMPTY[] = { 5, 5, 13, 16, 20, 25 };
 #define MENU_DIFF_SIZE       (30 * 30 + 2)
 #define MENU_HIGHSCORE_OFFSET (OFF_SHIP + SHIP_W * SHIP_H * NUM_SHIP_FRAMES)
 
+/* shared scratch buffer for compositing info rectangles (80x250).
+   used by draw_level_info, menu_create_level, and the empty-levels path.
+   only one runs at a time, so sharing is safe. */
+static uint8_t rect_buf[80 * 250];
+
 static void draw_menu_bg(void);
 static void draw_level_info(void);
 static void menu_create_level(void);
@@ -47,7 +52,6 @@ void menu_run(void)
         if (ms.num_levels == 0) {
             /* no levels found */
             /* draw info rectangle with "EMPTY" text */
-            uint8_t rect_buf[80 * 250];
             memset(rect_buf, 0x08, sizeof(rect_buf));
             int tx = center_text_x(TXT_EMPTY + 1, TXT_EMPTY[0], 25 * 8);
             draw_gd_text(rect_buf, 40 + tx, 27, 250, TXT_EMPTY + 1, TXT_EMPTY[0]);
@@ -113,6 +117,7 @@ void menu_run(void)
             if (level_load(ms.current_idx)) {
                 gs.beg_lvl_to_play = 0;
                 gs.flags.in_editor = false;
+                gfx_game_init(); /* reload game sprites (menu overwrites them) */
                 game_run();
             }
             continue; /* return to menu */
@@ -146,7 +151,8 @@ static void draw_menu_bg(void)
     /* draw side decorations */
     draw_sprite_transparent(GFX_VBUF, 2, 100,
                             menu_data(MENU_SIDE_OFFSET), 30, 100);
-    /* mirrored right side would need a mirror draw - skip for now */
+    draw_sprite_transparent_mirror(GFX_VBUF, LCD_WIDTH - 30 - 2, 100,
+                                   menu_data(MENU_SIDE_OFFSET), 30, 100);
 
     /* draw header */
     draw_sprite_transparent(GFX_VBUF, 60, 0,
@@ -164,7 +170,6 @@ static void draw_menu_bg(void)
 static void draw_level_info(void)
 {
     /* draw info rectangle */
-    uint8_t rect_buf[80 * 250];
     memset(rect_buf, 0x08, sizeof(rect_buf));
 
     /* get level name */
@@ -232,7 +237,6 @@ static void menu_create_level(void)
 
     while (true) {
         /* draw name entry screen */
-        uint8_t rect_buf[80 * 250];
         memset(rect_buf, 0x08, sizeof(rect_buf));
 
         /* draw current name */

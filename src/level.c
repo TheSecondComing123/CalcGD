@@ -71,6 +71,7 @@ bool level_load(uint8_t level_idx)
     /* map_size_x (3 bytes) */
     gs.map_size_x = p[0] | ((uint24_t)p[1] << 8) | ((uint24_t)p[2] << 16);
     p += 3;
+    if (gs.map_size_x == 0) return false;
 
     /* extra rows above 10 (1 byte) - currently always 0 */
     uint8_t extra_rows = *p++;
@@ -173,7 +174,9 @@ void score_update(uint24_t level_id, uint24_t progress)
 {
     ti_var_t slot = ti_Open(SCORE_APPVAR, "r+");
     if (!slot) {
-        /* create the AppVar */
+        /* AppVar doesn't exist yet; create it.
+           "w" is safe here because "r+" only fails when the var is absent
+           (fileioc dearchives automatically for "r+"). */
         slot = ti_Open(SCORE_APPVAR, "w");
         if (!slot) return;
     }
@@ -193,8 +196,8 @@ void score_update(uint24_t level_id, uint24_t progress)
                 entry[4] = (progress >> 8) & 0xFF;
                 entry[5] = (progress >> 16) & 0xFF;
             }
-            ti_Close(slot);
             ti_SetArchiveStatus(true, slot);
+            ti_Close(slot);
             return;
         }
     }
@@ -209,6 +212,7 @@ void score_update(uint24_t level_id, uint24_t progress)
     entry[4] = (progress >> 8) & 0xFF;
     entry[5] = (progress >> 16) & 0xFF;
     ti_Write(entry, 6, 1, slot);
+    ti_SetArchiveStatus(true, slot);
     ti_Close(slot);
 }
 

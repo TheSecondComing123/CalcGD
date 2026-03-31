@@ -64,9 +64,24 @@ static void game_level_done(void);
 static void save_checkpoint(void);
 static void restore_checkpoint(void);
 
+/* apply speed to player Y position, clamping to prevent unsigned underflow.
+   on eZ80, uint24_t + negative int16_t wraps to ~16M instead of going negative,
+   which would cause wild VRAM writes. */
+static inline void apply_speed_y(int16_t spd)
+{
+    int24_t new_y = (int24_t)gs.char_pos_y + spd;
+    if (new_y < 0)
+        new_y = 0;
+    else if (new_y > LCD_HEIGHT)
+        new_y = LCD_HEIGHT;
+    gs.char_pos_y = (uint24_t)new_y;
+}
+
 /* read a pixel from the current draw buffer */
 static inline uint8_t read_pixel(int x, int y)
 {
+    if (x < 0 || x >= LCD_WIDTH || y < 0 || y >= LCD_HEIGHT)
+        return BG_COLOR;
     return gfx_GetPixel(x, y);
 }
 
@@ -107,15 +122,36 @@ static void game_init(void)
         gs.tail_buf[i].pos = 0;
     }
 
-    /* check initial spaceship/gravity state based on context toggles already passed */
-    if (gs.flags.ship_available) {
-        uint8_t toggles_passed = gs.num_ship_total - gs.num_ship_remaining;
-        if (toggles_passed & 1)
-            spaceship_on();
+    /* advance gravity contexts past the start column */
+    uint8_t gravity_passed = 0;
+    while (gs.num_gravity_remaining > 0) {
+        uint24_t trigger = gs.addr_gravity[0] |
+            ((uint24_t)gs.addr_gravity[1] << 8) |
+            ((uint24_t)gs.addr_gravity[2] << 16);
+        if (trigger > gs.beg_lvl_to_play) break;
+        gs.addr_gravity += 3;
+        gs.num_gravity_remaining--;
+        gravity_passed++;
     }
-    if (gs.num_gravity_remaining & 1) {
+    if (gravity_passed & 1) {
         gs.flags.gravity_reversed = true;
-        gs.char_pos_y -= 2 * LCD_WIDTH; /* adjust for reversed gravity starting pos */
+        gs.char_pos_y = TILE_H * 2;
+    }
+
+    /* advance ship contexts past the start column */
+    if (gs.flags.ship_available) {
+        uint8_t ship_passed = 0;
+        while (gs.num_ship_remaining > 0) {
+            uint24_t trigger = gs.addr_spaceship[0] |
+                ((uint24_t)gs.addr_spaceship[1] << 8) |
+                ((uint24_t)gs.addr_spaceship[2] << 16);
+            if (trigger > gs.beg_lvl_to_play) break;
+            gs.addr_spaceship += 3;
+            gs.num_ship_remaining--;
+            ship_passed++;
+        }
+        if (ship_passed & 1)
+            spaceship_on();
     }
 }
 
@@ -173,8 +209,8 @@ void game_run(void)
 
         /* set up timer for frame sync */
         timer_Control = TIMER2_DISABLE;
-        timer_2_Counter = gs.level_speed << 16;
-        timer_2_ReloadValue = gs.level_speed << 16;
+        timer_2_Counter = (uint24_t)gs.level_speed << 16;
+        timer_2_ReloadValue = (uint24_t)gs.level_speed << 16;
         timer_Control = TIMER2_ENABLE | TIMER2_32K | TIMER2_DOWN | TIMER2_0INT;
 
         /* main game loop */
@@ -259,7 +295,7 @@ static enum tick_result game_loop_tick(void)
         /* apply speed */
         int16_t spd = gs.flags.gravity_reversed ?
             jump_lut_rvrs[gs.jmp_speed_idx] : jump_lut[gs.jmp_speed_idx];
-        gs.char_pos_y += spd;
+        apply_speed_y(spd);
 
     } else {
         /* cube mode */
@@ -296,7 +332,7 @@ static enum tick_result game_loop_tick(void)
             /* apply speed */
             int16_t spd = gs.flags.gravity_reversed ?
                 jump_lut_rvrs[gs.jmp_speed_idx] : jump_lut[gs.jmp_speed_idx];
-            gs.char_pos_y += spd;
+            apply_speed_y(spd);
 
             /* rotate sprite */
             gs.spr_frame++;
@@ -412,6 +448,17 @@ static void draw_new_column(void)
             tiles_to_draw = 2;
 
         for (int t = 0; t < tiles_to_draw; t++) {
+            /* bounds check: don't read past end of map row */
+            uint24_t abs_col = (gs.first_block - gs.beginning_map -
+                                gs.bytes_to_skip) + WIN_COLS + t;
+            if (abs_col >= gs.map_size_x) {
+                /* past map end: fill with background */
+                for (int py = 0; py < TILE_H && row * TILE_H + py < GAME_AREA_H; py++) {
+                    uint8_t *dst = GFX_VBUF + (row * TILE_H + py) * LCD_WIDTH + draw_x;
+                    memset(dst, BG_COLOR, SCROLL_SPD);
+                }
+                continue;
+            }
             uint8_t tile_id = map_ptr[WIN_COLS + t];
             if (tile_id == 0 || tile_id >= NUM_GAME_TILES) {
                 /* empty tile - fill with background */
@@ -478,14 +525,21 @@ static void draw_character(void)
 
     int sy = gs.char_pos_y;
 
-    /* bounds check */
-    if (sy < 0 || sy + h > LCD_HEIGHT * 2) return;
-
-    /* save background behind sprite */
+    /* always save/restore the full SPR_W x SPR_H area to avoid stride
+       mismatch when switching between cube (30x30) and ship (22x22) */
     uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
-    for (int row = 0; row < h; row++) {
+
+    if (sy < 0 || sy + SPR_H > LCD_HEIGHT) {
+        /* offscreen: fill save buffer with BG so erase stays consistent */
+        memset(save_buf, BG_COLOR, SPR_W * SPR_H);
+        gs.current_spr_buf ^= 1;
+        return;
+    }
+
+    /* save background behind sprite (always full 30x30) */
+    for (int row = 0; row < SPR_H; row++) {
         uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
-        memcpy(save_buf + row * w, screen_row, w);
+        memcpy(save_buf + row * SPR_W, screen_row, SPR_W);
     }
 
     /* draw sprite with transparency */
@@ -497,16 +551,14 @@ static void draw_character(void)
 static void erase_character(void)
 {
     int sy = gs.prev_pos_y;
-    int w = gs.sprite_size;
-    int h = gs.sprite_size;
 
-    if (sy < 0 || sy + h > LCD_HEIGHT * 2) return;
+    if (sy < 0 || sy + SPR_H > LCD_HEIGHT) return;
 
-    /* restore background from saved buffer */
+    /* restore background (always full 30x30, matching draw_character) */
     uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
-    for (int row = 0; row < h; row++) {
+    for (int row = 0; row < SPR_H; row++) {
         uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
-        memcpy(screen_row, save_buf + row * w, w);
+        memcpy(screen_row, save_buf + row * SPR_W, SPR_W);
     }
 }
 
@@ -756,6 +808,11 @@ static void game_pause(void)
     }
 
     while (kb_AnyKey()) kb_Scan();
+
+    /* sync both buffers: the visible screen has the game frame,
+       but the draw buffer has the pause overlay. copy screen -> buffer
+       so the game loop resumes with consistent double buffers. */
+    gfx_BlitScreen();
 }
 
 #define DEATH_PARTICLES 16
@@ -855,10 +912,10 @@ static void game_die(void)
     }
 
     for (int frame = 0; frame < DEATH_FRAMES; frame++) {
-        /* erase player sprite area */
+        /* erase player sprite area (clipped: player may die near screen edge) */
         gfx_SetColor(BG_COLOR);
-        gfx_FillRectangle_NoClip(SPR_POS_X - 2, gs.char_pos_y - 2,
-                                  gs.sprite_size + 4, gs.sprite_size + 4);
+        gfx_FillRectangle(SPR_POS_X - 2, (int)gs.char_pos_y - 2,
+                          gs.sprite_size + 4, gs.sprite_size + 4);
 
         /* draw particles */
         for (int i = 0; i < DEATH_PARTICLES; i++) {

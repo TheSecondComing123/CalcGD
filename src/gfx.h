@@ -34,6 +34,10 @@ void draw_tile(uint8_t *buf, int x, int y, uint8_t tile_id);
 void draw_sprite_transparent(uint8_t *buf, int x, int y,
                              const uint8_t *sprite, int w, int h);
 
+/* draw a sprite horizontally mirrored with transparency */
+void draw_sprite_transparent_mirror(uint8_t *buf, int x, int y,
+                                    const uint8_t *sprite, int w, int h);
+
 /* draw a GD font string into a 250-wide buffer */
 void draw_gd_text(uint8_t *buf, int x, int y, int buf_w,
                   const uint8_t *str, uint8_t len);

@@ -177,10 +177,18 @@ const uint8_t *menu_data(uint24_t offset)
 void draw_tile(uint8_t *buf, int x, int y, uint8_t tile_id)
 {
     const uint8_t *src = tile_data(tile_id);
+
+    /* clip to screen bounds */
+    int draw_w = TILE_W;
+    int draw_h = TILE_H;
+    if (x + draw_w > LCD_WIDTH)  draw_w = LCD_WIDTH - x;
+    if (y + draw_h > LCD_HEIGHT) draw_h = LCD_HEIGHT - y;
+    if (x < 0 || y < 0 || draw_w <= 0 || draw_h <= 0) return;
+
     uint8_t *dst = buf + y * LCD_WIDTH + x;
 
-    for (int row = 0; row < TILE_H; row++) {
-        for (int col = 0; col < TILE_W; col++) {
+    for (int row = 0; row < draw_h; row++) {
+        for (int col = 0; col < draw_w; col++) {
             uint8_t px = src[row * TILE_W + col];
             if (px != BG_COLOR)
                 dst[col] = px;
@@ -197,6 +205,22 @@ void draw_sprite_transparent(uint8_t *buf, int x, int y,
     for (int row = 0; row < h; row++) {
         for (int col = 0; col < w; col++) {
             uint8_t px = *sprite++;
+            if (px != BG_COLOR)
+                dst[col] = px;
+        }
+        dst += LCD_WIDTH;
+    }
+}
+
+void draw_sprite_transparent_mirror(uint8_t *buf, int x, int y,
+                                    const uint8_t *sprite, int w, int h)
+{
+    uint8_t *dst = buf + y * LCD_WIDTH + x;
+
+    for (int row = 0; row < h; row++) {
+        const uint8_t *src_row = sprite + row * w;
+        for (int col = 0; col < w; col++) {
+            uint8_t px = src_row[w - 1 - col];
             if (px != BG_COLOR)
                 dst[col] = px;
         }

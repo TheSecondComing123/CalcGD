@@ -25,6 +25,7 @@ static uint8_t  current_block;
 static void editor_draw_map(void);
 static void editor_draw_cursor(void);
 static void editor_draw_block_selector(void);
+static bool editor_expand_map(void);
 
 void editor_run(uint8_t *level_data_addr)
 {
@@ -131,8 +132,8 @@ void editor_run(uint8_t *level_data_addr)
 
         /* insert 10 columns */
         if (kb_IsDown(kb_KeyAlpha)) {
-            /* expand map by 10 columns - would need to resize AppVar */
-            /* skip for now as it's complex */
+            if (editor_expand_map())
+                redraw = true;
             delay(200);
         }
 
@@ -141,6 +142,7 @@ void editor_run(uint8_t *level_data_addr)
             level_load(ms.current_idx);
             gs.beg_lvl_to_play = edit_scroll_col + cursor_x;
             gs.flags.in_editor = true;
+            gfx_game_init(); /* reload game sprites (menu overwrites them) */
             game_run();
 
             /* restore editor display */
@@ -191,6 +193,65 @@ static void editor_draw_cursor(void)
     gfx_SetColor(CURSOR_COLOR);
     gfx_Rectangle_NoClip(x, y, TILE_W, TILE_H);
     gfx_Rectangle_NoClip(x + 1, y + 1, TILE_W - 2, TILE_H - 2);
+}
+
+static bool editor_expand_map(void)
+{
+    uint8_t num_rows = WIN_ROWS + edit_extra_rows;
+    uint24_t old_sx = edit_map_size_x;
+    uint24_t new_sx = old_sx + 10;
+    uint24_t expand = (uint24_t)10 * num_rows;
+
+    /* open the AppVar */
+    char *av_name = (char *)ms.levels[ms.current_idx].vat_name_addr;
+    ti_var_t slot = ti_Open(av_name, "r+");
+    if (!slot) return false;
+
+    /* compute offsets before resize */
+    uint8_t *orig_base = ti_GetDataPtr(slot);
+    uint24_t data_off = (uint24_t)(edit_data - orig_base);
+    uint24_t map_off  = (uint24_t)(edit_map_start - orig_base);
+
+    /* resize the AppVar */
+    uint24_t old_size = ti_GetSize(slot);
+    uint24_t new_size = old_size + expand;
+    if ((uint24_t)ti_Resize(new_size, slot) != new_size) {
+        ti_Close(slot);
+        return false;
+    }
+
+    /* recompute all pointers (data may have moved after resize) */
+    uint8_t *base = ti_GetDataPtr(slot);
+    edit_data = base + data_off;
+    edit_map_start = base + map_off;
+    ms.levels[ms.current_idx].data_addr = base;
+    ms.levels[ms.current_idx].after_name_addr = edit_data;
+
+    /* move context data (gravity + ship) forward */
+    uint24_t ctx_off = map_off + (uint24_t)num_rows * old_sx;
+    uint24_t ctx_size = old_size - ctx_off;
+    memmove(base + ctx_off + expand, base + ctx_off, ctx_size);
+
+    /* rearrange rows back-to-front to avoid overwrites */
+    for (int row = num_rows - 1; row >= 1; row--) {
+        uint8_t *src = edit_map_start + (uint24_t)row * old_sx;
+        uint8_t *dst = edit_map_start + (uint24_t)row * new_sx;
+        memmove(dst, src, old_sx);
+        memset(dst + old_sx, 0, 10);
+    }
+    /* row 0 is already in place, just zero the new columns */
+    memset(edit_map_start + old_sx, 0, 10);
+
+    /* update map_size_x in AppVar data */
+    uint8_t *sx_ptr = edit_data + 5; /* after diff(1) + id(3) + speed(1) */
+    sx_ptr[0] = new_sx & 0xFF;
+    sx_ptr[1] = (new_sx >> 8) & 0xFF;
+    sx_ptr[2] = (new_sx >> 16) & 0xFF;
+
+    edit_map_size_x = new_sx;
+
+    ti_Close(slot);
+    return true;
 }
 
 static void editor_draw_block_selector(void)
