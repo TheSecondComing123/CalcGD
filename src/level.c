@@ -35,6 +35,8 @@ static bool parse_level_meta(uint8_t *data, uint24_t size, level_meta_t *meta)
     off += len2;
 
     meta->difficulty = data[off++];
+    if (meta->difficulty > 3) return false;
+
     meta->level_id = data[off] | ((uint24_t)data[off + 1] << 8) | ((uint24_t)data[off + 2] << 16);
     off += 3;
 
@@ -303,6 +305,7 @@ void score_update(uint24_t level_id, uint24_t progress)
 bool level_create(const uint8_t *name_buf, uint8_t difficulty)
 {
     if (!name_buf) return false;
+    if (difficulty > 3) return false;
 
     uint8_t len1 = name_buf[0];
     if (len1 > 8) return false;

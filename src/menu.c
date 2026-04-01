@@ -117,7 +117,13 @@ void menu_run(void)
         if (play) {
             gs.beg_lvl_to_play = 0;
             gs.flags.in_editor = false;
-            gfx_game_init(); /* reload game sprites (menu overwrites them) */
+            if (!gfx_game_init()) {
+                gfx_cleanup();
+                os_ClrHome();
+                os_PutStrFull("Need AppVar GDGrphc");
+                while (!os_GetCSC());
+                return;
+            }
             game_run();
             continue; /* return to menu */
         }

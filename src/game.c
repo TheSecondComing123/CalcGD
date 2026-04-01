@@ -58,6 +58,7 @@ static bool check_collision_ship(void);
 static void handle_jump_pads(void);
 static void spaceship_on(void);
 static void spaceship_off(void);
+static void draw_pause_overlay(void);
 static void game_pause(void);
 static void game_die(void);
 static void game_level_done(void);
@@ -584,7 +585,7 @@ static void erase_character(void)
     if (sy < 0 || sy + SPR_H > LCD_HEIGHT) return;
 
     /* restore background (always full 30x30, matching draw_character) */
-    uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr2 : gs.behind_spr1;
+    uint8_t *save_buf = (gs.current_spr_buf == 0) ? gs.behind_spr1 : gs.behind_spr2;
     for (int row = 0; row < SPR_H; row++) {
         uint8_t *screen_row = GFX_VBUF + (sy + row) * LCD_WIDTH + SPR_POS_X;
         memcpy(screen_row, save_buf + row * SPR_W, SPR_W);
@@ -801,21 +802,33 @@ static void spaceship_off(void)
     gs.jmp_speed_idx = LUT_REST_IDX;
 }
 
-static void game_pause(void)
+static void draw_pause_overlay(void)
 {
-    while (kb_IsDown(kb_KeyEnter)) kb_Scan();
+    const char *prac_msg = gs.flags.practice_mode ?
+        "[Alpha] Practice: ON " : "[Alpha] Practice: OFF";
 
-    /* draw pause overlay */
+    gfx_SetColor(0x09); /* black panel */
+    gfx_FillRectangle_NoClip(32, 62, LCD_WIDTH - 64, 118);
+    gfx_SetColor(0x06); /* white border */
+    gfx_Rectangle_NoClip(32, 62, LCD_WIDTH - 64, 118);
+
     gfx_SetTextFGColor(0x06); /* white */
     gfx_SetTextBGColor(0x09); /* black */
     gfx_SetTextScale(2, 2);
     gfx_PrintStringXY("PAUSED", (LCD_WIDTH - gfx_GetStringWidth("PAUSED")) / 2, 80);
     gfx_SetTextScale(1, 1);
-    const char *prac_msg = gs.flags.practice_mode ?
-        "[Alpha] Practice: ON" : "[Alpha] Practice: OFF";
     gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
     gfx_PrintStringXY("[Enter] Resume", (LCD_WIDTH - gfx_GetStringWidth("[Enter] Resume")) / 2, 140);
-    gfx_SwapDraw();
+}
+
+static void game_pause(void)
+{
+    while (kb_IsDown(kb_KeyEnter)) kb_Scan();
+
+    /* keep gameplay pixels in the draw buffer and show overlay on screen only */
+    gfx_BlitScreen();
+    gfx_SetDrawScreen();
+    draw_pause_overlay();
 
     while (true) {
         kb_Scan();
@@ -826,22 +839,15 @@ static void game_pause(void)
             if (!gs.flags.practice_mode)
                 gs.checkpoint.valid = false;
             while (kb_IsDown(kb_KeyAlpha)) kb_Scan();
-            /* redraw toggle text */
-            prac_msg = gs.flags.practice_mode ?
-                "[Alpha] Practice: ON " : "[Alpha] Practice: OFF";
-            gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
-            gfx_SwapDraw();
-            gfx_PrintStringXY(prac_msg, (LCD_WIDTH - gfx_GetStringWidth(prac_msg)) / 2, 120);
-            gfx_SwapDraw();
+            draw_pause_overlay();
         }
     }
 
     while (kb_AnyKey()) kb_Scan();
 
-    /* sync both buffers: the visible screen has the game frame,
-       but the draw buffer has the pause overlay. copy screen -> buffer
-       so the game loop resumes with consistent double buffers. */
-    gfx_BlitScreen();
+    /* restore preserved gameplay frame and resume drawing to the back buffer */
+    gfx_BlitBuffer();
+    gfx_SetDrawBuffer();
 }
 
 #define DEATH_PARTICLES 16
