@@ -159,7 +159,7 @@ bool level_load(uint8_t level_idx)
 
     gs.num_gravity_remaining = data[context_off++];
     gs.num_gravity_total = gs.num_gravity_remaining;
-    gs.addr_gravity_base_off = context_off;
+    gs.addr_gravity_base_off = context_off - meta.map_off;
 
     if ((uint32_t)context_off + (uint32_t)gs.num_gravity_remaining * 3u > size) {
         ti_Close(slot);
@@ -182,7 +182,7 @@ bool level_load(uint8_t level_idx)
 
         gs.num_ship_remaining = data[context_off++];
         gs.num_ship_total = gs.num_ship_remaining;
-        gs.addr_spaceship_base_off = context_off;
+        gs.addr_spaceship_base_off = context_off - meta.map_off;
 
         if ((uint32_t)context_off + (uint32_t)gs.num_ship_remaining * 3u > size) {
             ti_Close(slot);
@@ -329,9 +329,10 @@ bool level_create(const uint8_t *name_buf, uint8_t difficulty)
     ti_var_t slot = ti_Open(av_name, "r");
     if (slot) {
         ti_Close(slot);
+        uint8_t suffix_pos = (j < 8) ? j : 7;
         for (uint8_t d = '0'; d <= '9'; d++) {
-            av_name[j] = d;
-            av_name[j + 1] = 0;
+            av_name[suffix_pos] = d;
+            av_name[suffix_pos + 1] = 0;
             slot = ti_Open(av_name, "r");
             if (!slot) break;
             ti_Close(slot);

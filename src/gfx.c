@@ -246,53 +246,94 @@ void draw_tile(uint8_t *buf, int x, int y, uint8_t tile_id)
 void draw_sprite_transparent(uint8_t *buf, int x, int y,
                              const uint8_t *sprite, int w, int h)
 {
-    uint8_t *dst = buf + y * LCD_WIDTH + x;
+    if (!buf || !sprite || w <= 0 || h <= 0)
+        return;
 
-    for (int row = 0; row < h; row++) {
-        for (int col = 0; col < w; col++) {
-            uint8_t px = *sprite++;
+    int start_col = 0;
+    int start_row = 0;
+    int end_col = w;
+    int end_row = h;
+
+    if (x < 0) start_col = -x;
+    if (y < 0) start_row = -y;
+    if (x + end_col > LCD_WIDTH) end_col = LCD_WIDTH - x;
+    if (y + end_row > LCD_HEIGHT) end_row = LCD_HEIGHT - y;
+
+    if (start_col >= end_col || start_row >= end_row)
+        return;
+
+    for (int row = start_row; row < end_row; row++) {
+        const uint8_t *src_row = sprite + row * w;
+        uint8_t *dst = buf + (y + row) * LCD_WIDTH + x + start_col;
+        for (int col = start_col; col < end_col; col++) {
+            uint8_t px = src_row[col];
             if (px != BG_COLOR)
-                dst[col] = px;
+                dst[col - start_col] = px;
         }
-        dst += LCD_WIDTH;
     }
 }
 
 void draw_sprite_transparent_mirror(uint8_t *buf, int x, int y,
                                     const uint8_t *sprite, int w, int h)
 {
-    uint8_t *dst = buf + y * LCD_WIDTH + x;
+    if (!buf || !sprite || w <= 0 || h <= 0)
+        return;
 
-    for (int row = 0; row < h; row++) {
+    int start_col = 0;
+    int start_row = 0;
+    int end_col = w;
+    int end_row = h;
+
+    if (x < 0) start_col = -x;
+    if (y < 0) start_row = -y;
+    if (x + end_col > LCD_WIDTH) end_col = LCD_WIDTH - x;
+    if (y + end_row > LCD_HEIGHT) end_row = LCD_HEIGHT - y;
+
+    if (start_col >= end_col || start_row >= end_row)
+        return;
+
+    for (int row = start_row; row < end_row; row++) {
         const uint8_t *src_row = sprite + row * w;
-        for (int col = 0; col < w; col++) {
+        uint8_t *dst = buf + (y + row) * LCD_WIDTH + x + start_col;
+        for (int col = start_col; col < end_col; col++) {
             uint8_t px = src_row[w - 1 - col];
             if (px != BG_COLOR)
-                dst[col] = px;
+                dst[col - start_col] = px;
         }
-        dst += LCD_WIDTH;
     }
 }
 
-void draw_gd_text(uint8_t *buf, int x, int y, int buf_w,
+void draw_gd_text(uint8_t *buf, int x, int y, int buf_w, int buf_h,
                   const uint8_t *str, uint8_t len)
 {
+    if (!buf || !str || buf_w <= 0 || buf_h <= 0)
+        return;
+
     for (uint8_t i = 0; i < len; i++) {
         uint8_t ch = str[i];
         if (ch == ' ') {
             x += 10;
             continue;
         }
+        if (ch < 1 || ch > NUM_FONT_CHARS) {
+            x += 25;
+            continue;
+        }
         /* character index: 1-based in the original format */
         const uint8_t *glyph = font_char(ch - 1);
-        uint8_t *dst = buf + y * buf_w + x;
         for (int row = 0; row < FONT_H; row++) {
+            int dy = y + row;
+            if (dy < 0 || dy >= buf_h)
+                continue;
+            uint8_t *dst = buf + dy * buf_w;
             for (int col = 0; col < FONT_W; col++) {
+                int dx = x + col;
+                if (dx < 0 || dx >= buf_w)
+                    continue;
                 uint8_t px = glyph[row * FONT_W + col];
                 if (px != BG_COLOR_MENU)
-                    dst[col] = px;
+                    dst[dx] = px;
             }
-            dst += buf_w;
         }
         x += 25; /* character advance */
     }

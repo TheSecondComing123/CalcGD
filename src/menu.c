@@ -34,16 +34,17 @@ static uint8_t get_key_letter(void);
 
 void menu_run(void)
 {
-    /* load menu graphics */
-    if (!gfx_menu_init()) {
-        gfx_cleanup();
-        os_ClrHome();
-        os_PutStrFull("Need AppVar GDMenu");
-        while (!os_GetCSC());
-        return;
-    }
-
     while (true) {
+        /* reload menu graphics each time we return from game/editor,
+           since menu and game share the same scratch buffer */
+        if (!gfx_menu_init()) {
+            gfx_cleanup();
+            os_ClrHome();
+            os_PutStrFull("Need AppVar GDMenu");
+            while (!os_GetCSC());
+            return;
+        }
+
         set_menu_palette();
         level_scan();
 
@@ -54,7 +55,7 @@ void menu_run(void)
             /* draw info rectangle with "EMPTY" text */
             memset(rect_buf, 0x08, sizeof(rect_buf));
             int tx = center_text_x(TXT_EMPTY + 1, TXT_EMPTY[0], 25 * 8);
-            draw_gd_text(rect_buf, 40 + tx, 27, 250, TXT_EMPTY + 1, TXT_EMPTY[0]);
+            draw_gd_text(rect_buf, 40 + tx, 27, 250, 80, TXT_EMPTY + 1, TXT_EMPTY[0]);
 
             /* copy rect to screen */
             uint8_t *screen = GFX_VBUF;
@@ -175,12 +176,12 @@ static void draw_level_info(void)
 
     if (lines == 1) {
         int tx = center_text_x(line1, len1, 25 * 8);
-        draw_gd_text(rect_buf, 40 + tx, 27, 250, line1, len1);
+        draw_gd_text(rect_buf, 40 + tx, 27, 250, 80, line1, len1);
     } else {
         int tx = center_text_x(line1, len1, 25 * 8);
-        draw_gd_text(rect_buf, 40 + tx, 12, 250, line1, len1);
+        draw_gd_text(rect_buf, 40 + tx, 12, 250, 80, line1, len1);
         tx = center_text_x(line2, len2, 25 * 8);
-        draw_gd_text(rect_buf, 40 + tx, 45, 250, line2, len2);
+        draw_gd_text(rect_buf, 40 + tx, 45, 250, 80, line2, len2);
     }
 
     /* draw difficulty icon */
@@ -240,14 +241,14 @@ static void menu_create_level(void)
         if (len1 > 0) {
             int tx = center_text_x(name_buf + 1, len1, 25 * 8);
             if (second_line) {
-                draw_gd_text(rect_buf, 40 + tx, 12, 250, name_buf + 1, len1);
+                draw_gd_text(rect_buf, 40 + tx, 12, 250, 80, name_buf + 1, len1);
                 uint8_t len2 = name_buf[1 + len1];
                 if (len2 > 0) {
                     tx = center_text_x(name_buf + 2 + len1, len2, 25 * 8);
-                    draw_gd_text(rect_buf, 40 + tx, 45, 250, name_buf + 2 + len1, len2);
+                    draw_gd_text(rect_buf, 40 + tx, 45, 250, 80, name_buf + 2 + len1, len2);
                 }
             } else {
-                draw_gd_text(rect_buf, 40 + tx, 27, 250, name_buf + 1, len1);
+                draw_gd_text(rect_buf, 40 + tx, 27, 250, 80, name_buf + 1, len1);
             }
         }
 

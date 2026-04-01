@@ -27,9 +27,11 @@ static uint8_t cursor_y;
 static uint8_t current_block;
 
 static void editor_draw_map(void);
+static void editor_draw_map_single(void);
 static void editor_draw_cursor(void);
 static void editor_draw_block_selector(void);
 static bool editor_expand_map(void);
+static void editor_clamp_cursor(void);
 
 static bool editor_parse_level(void)
 {
@@ -91,6 +93,7 @@ void editor_run(uint8_t level_idx)
     edit_scroll_col = 0;
     cursor_x = 0;
     cursor_y = WIN_ROWS / 2;
+    editor_clamp_cursor();
     current_block = 1;
 
     set_game_palette();
@@ -112,11 +115,14 @@ void editor_run(uint8_t level_idx)
             break;
 
         if (kb_IsDown(kb_KeyRight)) {
-            if (cursor_x < EDITOR_COLS - 1) {
-                cursor_x++;
-            } else if (edit_scroll_col + EDITOR_COLS < edit_map_size_x) {
-                edit_scroll_col++;
-                redraw = true;
+            uint24_t cur_col = edit_scroll_col + cursor_x;
+            if (cur_col + 1 < edit_map_size_x) {
+                if (cursor_x < EDITOR_COLS - 1) {
+                    cursor_x++;
+                } else {
+                    edit_scroll_col++;
+                    redraw = true;
+                }
             }
             delay(80);
         }
@@ -140,16 +146,20 @@ void editor_run(uint8_t level_idx)
 
         if (kb_IsDown(kb_KeyEnter) || kb_IsDown(kb_Key2nd)) {
             uint24_t map_col = edit_scroll_col + cursor_x;
-            uint24_t map_idx = (uint24_t)cursor_y * edit_map_size_x + map_col;
-            edit_map_start[map_idx] = current_block;
-            redraw = true;
+            if (map_col < edit_map_size_x) {
+                uint24_t map_idx = (uint24_t)cursor_y * edit_map_size_x + map_col;
+                edit_map_start[map_idx] = current_block;
+                redraw = true;
+            }
             delay(80);
         }
         if (kb_IsDown(kb_KeyDel)) {
             uint24_t map_col = edit_scroll_col + cursor_x;
-            uint24_t map_idx = (uint24_t)cursor_y * edit_map_size_x + map_col;
-            edit_map_start[map_idx] = 0;
-            redraw = true;
+            if (map_col < edit_map_size_x) {
+                uint24_t map_idx = (uint24_t)cursor_y * edit_map_size_x + map_col;
+                edit_map_start[map_idx] = 0;
+                redraw = true;
+            }
             delay(80);
         }
 
@@ -165,8 +175,10 @@ void editor_run(uint8_t level_idx)
         }
 
         if (kb_IsDown(kb_KeyAlpha)) {
-            if (editor_expand_map())
+            if (editor_expand_map()) {
+                editor_clamp_cursor();
                 redraw = true;
+            }
             delay(200);
         }
 
@@ -200,6 +212,7 @@ void editor_run(uint8_t level_idx)
                     cursor_x = (uint8_t)(edit_map_size_x - 1);
                 }
             }
+            editor_clamp_cursor();
 
             set_game_palette();
             gfx_FillScreen(BG_COLOR);
@@ -225,6 +238,16 @@ void editor_run(uint8_t level_idx)
 }
 
 static void editor_draw_map(void)
+{
+    for (uint8_t buf = 0; buf < 2; buf++) {
+        editor_draw_map_single();
+        if (buf == 0)
+            gfx_SwapDraw();
+    }
+    gfx_SwapDraw();
+}
+
+static void editor_draw_map_single(void)
 {
     gfx_SetColor(BG_COLOR);
     gfx_FillRectangle_NoClip(0, 0, LCD_WIDTH, GAME_AREA_H);
@@ -253,10 +276,13 @@ static bool editor_expand_map(void)
 {
     if (!edit_slot) return false;
 
-    uint8_t num_rows = WIN_ROWS + edit_extra_rows;
+    uint16_t num_rows = (uint16_t)WIN_ROWS + edit_extra_rows;
+    if (num_rows == 0)
+        return false;
+
     uint24_t old_sx = edit_map_size_x;
     uint24_t new_sx = old_sx + 10;
-    uint24_t expand = (uint24_t)10 * num_rows;
+    uint24_t expand = (uint24_t)10 * (uint24_t)num_rows;
 
     uint24_t old_size = ti_GetSize(edit_slot);
     uint24_t new_size = old_size + expand;
@@ -282,7 +308,7 @@ static bool editor_expand_map(void)
     uint24_t ctx_size = old_size - ctx_off;
     memmove(base + ctx_off + expand, base + ctx_off, ctx_size);
 
-    for (int row = num_rows - 1; row >= 1; row--) {
+    for (int row = (int)num_rows - 1; row >= 1; row--) {
         uint8_t *src = edit_map_start + (uint24_t)row * old_sx;
         uint8_t *dst = edit_map_start + (uint24_t)row * new_sx;
         memmove(dst, src, old_sx);
@@ -310,4 +336,16 @@ static void editor_draw_block_selector(void)
     gfx_Rectangle_NoClip(preview_x - 1, preview_y - 1, TILE_W + 2, TILE_H + 2);
 
     draw_tile(GFX_VBUF, preview_x, preview_y, current_block);
+}
+
+static void editor_clamp_cursor(void)
+{
+    if (edit_map_size_x == 0) {
+        cursor_x = 0;
+        return;
+    }
+
+    uint24_t max_x = (edit_map_size_x > EDITOR_COLS) ? (EDITOR_COLS - 1) : (edit_map_size_x - 1);
+    if (cursor_x > max_x)
+        cursor_x = (uint8_t)max_x;
 }
